@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Watch your coding agents work: live, visual, read-only.</b><br>
-  A live dashboard for Claude Code and Codex that sits beside the apps you already use.<br>
+  A live dashboard for Claude Code, Codex and Pi that sits beside the apps you already use.<br>
   No hooks, no wrappers, no API keys.
 </p>
 
@@ -15,7 +15,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2020.11-339933?logo=nodedotjs&logoColor=white" alt="Node 20.11 or newer">
   <img src="https://img.shields.io/badge/core%20dependencies-0-brightgreen" alt="No runtime dependencies in the core">
-  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex-d97757" alt="Works with Claude Code and Codex">
+  <img src="https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Pi-d97757" alt="Works with Claude Code, Codex and Pi">
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
   <a href="docs/API.md">API</a>
 </p>
 
-Keep using Claude Code and Codex exactly as you do now: the CLI, the IDE extensions or the desktop apps. `oadt` sits beside them, tails the transcripts they already write, and turns them into one clean live event stream. A visual frontend renders that stream. You can also build your own frontend on top of it in a few lines.
+Keep using Claude Code, Codex and Pi exactly as you do now: the CLI, the IDE extensions or the desktop apps. `oadt` sits beside them, tails the transcripts they already write, and turns them into one clean live event stream. A visual frontend renders that stream. You can also build your own frontend on top of it in a few lines.
 
 https://github.com/user-attachments/assets/128bed0d-3890-4ca1-8d75-0930b99a1472
 
@@ -57,7 +57,7 @@ npm run build
 npm start            # → http://127.0.0.1:4545
 ```
 
-Then start (or keep using) Claude Code or Codex anywhere on the machine. Nothing running? Try the simulator:
+Then start (or keep using) Claude Code, Codex or Pi anywhere on the machine. Nothing running? Try the simulator:
 
 ```bash
 npm run demo
@@ -110,6 +110,7 @@ flowchart LR
   subgraph Harnesses["Your agents (unchanged)"]
     CC["Claude Code<br/>~/.claude/projects/**.jsonl"]
     CX["Codex<br/>~/.codex/sessions/**/rollout-*.jsonl"]
+    PI["Pi<br/>~/.pi/agent/sessions/**/*.jsonl"]
     YOU["Your own agent<br/>POST /api/ingest"]
   end
   subgraph Core["@oadt/core (logic)"]
@@ -202,7 +203,7 @@ Serve any static frontend with `oadt --ui ./my-frontend`. See **[docs/FRONTENDS.
 ## CLI
 
 ```
-oadt [serve]              watch Claude Code + Codex and serve the UI (default)
+oadt [serve]              watch Claude Code, Codex + Pi and serve the UI (default)
 oadt --demo               simulated sessions, no real data
 oadt replay <files…>      replay transcripts as if live (--speed 10 --loop)
 oadt tail [--json]        print normalised events in the terminal (NDJSON with --json)
@@ -213,10 +214,11 @@ oadt sessions [--json]    list recent sessions and exit
       --token <secret>    require this bearer token
       --no-auth           no token even on a non-loopback host (e.g. a container published on 127.0.0.1)
       --since <dur>       backfill window: 30m, 6h, 2d (default 6h)
-      --harness <list>    claude-code,codex
+      --harness <list>    claude-code,codex,pi
       --redact <mode>     none | content | strict
       --claude-dir <dir>  default $CLAUDE_CONFIG_DIR or ~/.claude
       --codex-home <dir>  default $CODEX_HOME or ~/.codex
+      --pi-dir <dir>      Pi agent dir, default $PI_CODING_AGENT_DIR or ~/.pi/agent
       --ui <dir>          serve a different frontend · --no-ui for API only
       --cors <origin>     allow a cross-origin frontend (repeatable)
       --read-only         disable POST /api/ingest
@@ -242,17 +244,19 @@ Details in **[docs/API.md](docs/API.md)** and **[docs/PROTOCOL.md](docs/PROTOCOL
 
 ## What gets detected
 
-| | Claude Code | Codex |
-|---|---|---|
-| Sessions & titles | ✓ custom titles, first prompt | ✓ `session_index` names, first prompt |
-| Subagents | ✓ `subagents/agent-*.jsonl` + `meta.json` → spawning tool call | ✓ `spawn_agent` threads via `session_meta.source.subagent` |
-| Tool calls | ✓ all tools, MCP (`mcp__server__tool`) | ✓ `exec` scripts (inner commands summarised), `apply_patch` files, MCP, web search |
-| Success / failure | ✓ `is_error`, interrupts | ✓ exit codes, `Script failed`, aborts |
-| Turns | ✓ prompt → `end_turn` / interrupt | ✓ `task_started` / `task_complete` / `turn_aborted` |
-| Tokens | ✓ per message, de-duplicated across streamed records | ✓ cumulative `token_count` → deltas |
-| Context fill | ✓ (window when known) | ✓ with `model_context_window` |
-| Extras | cost, lines ±, PR links, permission mode | goals, model per turn |
-| Waiting for approval | heuristic (tool pending with no activity) | heuristic |
+| | Claude Code | Codex | Pi |
+|---|---|---|---|
+| Sessions & titles | ✓ custom titles, first prompt | ✓ `session_index` names, first prompt | ✓ `/name`, first prompt |
+| Subagents | ✓ `subagents/agent-*.jsonl` + `meta.json` → spawning tool call | ✓ `spawn_agent` threads via `session_meta.source.subagent` | shown as separate sessions, not linked yet |
+| Tool calls | ✓ all tools, MCP (`mcp__server__tool`) | ✓ `exec` scripts (inner commands summarised), `apply_patch` files, MCP, web search | ✓ `read` `write` `edit` `bash` `grep` `find` `ls`, any other tool by name |
+| Success / failure | ✓ `is_error`, interrupts | ✓ exit codes, `Script failed`, aborts | ✓ `isError`, aborts, provider errors |
+| Turns | ✓ prompt → `end_turn` / interrupt | ✓ `task_started` / `task_complete` / `turn_aborted` | ✓ derived from message roles and stop reasons |
+| Tokens | ✓ per message, de-duplicated across streamed records | ✓ cumulative `token_count` → deltas | ✓ per message, plus compaction and nested tool usage |
+| Context fill | ✓ (window when known) | ✓ with `model_context_window` | fill only, the window is not recorded |
+| Extras | cost, lines ±, PR links, permission mode | goals, model per turn | model, compaction notes |
+| Waiting for approval | heuristic (tool pending with no activity) | heuristic | never, Pi has no approval gate |
+
+Pi sessions are read from `~/.pi/agent/sessions` with no plugin or extension, and show up in every view next to the others. What is and is not derived, and how, is in **[docs/pi-adapter.md](docs/pi-adapter.md)**.
 
 New harnesses are a single adapter. See **[docs/ADAPTERS.md](docs/ADAPTERS.md)**.
 

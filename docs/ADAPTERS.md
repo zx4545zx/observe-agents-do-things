@@ -40,6 +40,8 @@ If your harness can't be tailed, for example because it lives in a database or
 comes over a socket, implement a `Source` instead (`start(emit)` / `stop()`) or
 push events to `POST /api/ingest`.
 
+The built-in adapters (Claude Code, Codex and [Pi](pi-adapter.md)) are the worked examples.
+
 ## Lessons from the built-in adapters
 
 - **Timestamps.** Use the transcript's own timestamps. Some records have none

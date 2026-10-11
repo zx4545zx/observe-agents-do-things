@@ -12,7 +12,7 @@ Every event carries:
 |---|---|
 | `seq` | Monotonic sequence number assigned by the observer. Use it to resume. |
 | `ts` | Wall-clock time of the activity in epoch ms, taken from the transcript when available. |
-| `harness` | `claude-code`, `codex`, or any string from a custom source. |
+| `harness` | `claude-code`, `codex`, `pi`, or any string from a custom source. |
 | `sessionId` | The session. For Codex this is the *root* thread, shared by its subagents. |
 | `agentId` | The acting agent. **The root agent's id equals the session id.** |
 | `kind` | One of the kinds below. |
