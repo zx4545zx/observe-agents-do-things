@@ -16,6 +16,7 @@
  * links; anything else stays an ordinary session. See docs/pi-subagents.md.
  */
 import { createHash } from 'node:crypto'
+import { closeSync, openSync, readSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -58,7 +59,10 @@ interface Spawn {
   parent: string
   /** Session file id of the launching session, checked against a fork child's `parentSession`. */
   parentFile: string
+  /** The launching tool call's id, when it is a call of its own (not nested in another tool). */
   callId?: string
+  /** Identity of the launch, so reading the same record twice registers it once. */
+  id: string
   label?: string
   task: string
   key: string
@@ -76,8 +80,11 @@ interface Spawn {
 export class PiSpawnIndex {
   private byKey = new Map<string, Spawn[]>()
   private byCall = new Map<string, Spawn>()
+  private ids = new Set<string>()
 
   add(s: Omit<Spawn, 'key' | 'claimed'>): void {
+    if (this.ids.has(s.id)) return
+    this.ids.add(s.id)
     const spawn: Spawn = { ...s, key: taskKey(s.task), claimed: false }
     const list = this.byKey.get(spawn.key)
     if (list) list.push(spawn)
@@ -167,6 +174,33 @@ export class PiAdapter implements TranscriptAdapter {
 
 type Body = EventDraft extends infer T ? (T extends unknown ? Omit<T, 'ts' | 'harness' | 'sessionId' | 'agentId'> : never) : never
 
+/** Synchronously feed `cb` every line of a file that contains `needle`, without holding the file in memory. */
+function forEachLine(path: string, needle: string, cb: (line: string) => void): void {
+  let fd: number
+  try {
+    fd = openSync(path, 'r')
+  } catch {
+    return
+  }
+  try {
+    const buf = Buffer.alloc(4 * 1024 * 1024)
+    let carry: Buffer = Buffer.alloc(0)
+    for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) {
+      let chunk = Buffer.concat([carry, buf.subarray(0, n)])
+      let nl: number
+      while ((nl = chunk.indexOf(0x0a)) >= 0) {
+        const line = chunk.subarray(0, nl)
+        if (line.includes(needle)) cb(line.toString('utf8'))
+        chunk = chunk.subarray(nl + 1)
+      }
+      carry = Buffer.from(chunk)
+    }
+    if (carry.includes(needle)) cb(carry.toString('utf8'))
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** Parses one Pi session file. */
 export class PiSessionParser implements LineParser {
   /** The session events are filed under. A subagent's is its root session once linked, otherwise its own id. */
@@ -206,6 +240,48 @@ export class PiSessionParser implements LineParser {
 
   markPartial(): void {
     this.partial = true
+  }
+
+  /**
+   * A large file is read as its head and tail only, so launches in the skipped middle
+   * would be missed and their children left unlinked. Read just those records, once,
+   * once this session's place in the tree is known.
+   */
+  private scanSkippedLaunches(): void {
+    if (!this.spawns || !this.sessionId || !this.agentId || !this.fileId) return
+    const { spawns, fileId, sessionId: root, agentId: parent } = this
+    forEachLine(this.path, SPAWN_TOOL, (raw) => {
+      let rec: unknown
+      try {
+        rec = JSON.parse(raw)
+      } catch {
+        return
+      }
+      if (!isRecord(rec) || rec.type !== 'message' || !isRecord(rec.message)) return
+      const m = rec.message
+      const ts = toMs(rec.timestamp, 0)
+      if (m.role === 'assistant' && Array.isArray(m.content)) {
+        for (const b of m.content) {
+          const task = isRecord(b) && b.type === 'toolCall' && b.name === SPAWN_TOOL && isRecord(b.arguments) ? str(b.arguments.task) : undefined
+          const callId = isRecord(b) ? str(b.id) : undefined
+          if (task && callId) spawns.add({ id: callId, root, parent, parentFile: fileId, callId, label: str((b as { arguments: Record<string, unknown> }).arguments.agent), task, t0: ts })
+        }
+      } else if (m.role === 'toolResult') {
+        const callId = str(m.toolCallId)
+        if (m.toolName === SPAWN_TOOL && callId) {
+          const details = isRecord(m.details) ? m.details : {}
+          spawns.finish(callId, ts, typeof details.startedAt === 'number' ? details.startedAt : undefined)
+        } else if (isRecord(m.nestedCalls) && Array.isArray(m.nestedCalls.calls)) {
+          // The outer call's own record may not mention the subagent, so its start is taken from how long it ran.
+          const t0 = ts - (typeof m.durationMs === 'number' ? m.durationMs : 0)
+          for (const c of m.nestedCalls.calls) {
+            const task = isRecord(c) && c.name === SPAWN_TOOL && isRecord(c.arguments) ? str(c.arguments.task) : undefined
+            const id = isRecord(c) ? str(c.id) : undefined
+            if (task && id) spawns.add({ id, root, parent, parentFile: fileId, label: str((c as { arguments: Record<string, unknown> }).arguments.agent), task, t0, t1: ts })
+          }
+        }
+      }
+    })
   }
 
   line(raw: string): void {
@@ -266,6 +342,7 @@ export class PiSessionParser implements LineParser {
     this.decided = true
     const held = this.held
     this.held = []
+    if (this.partial) this.scanSkippedLaunches()
     if (!link) {
       for (const h of held) this.emitNow(h.ts, h.body)
       return
@@ -389,7 +466,7 @@ export class PiSessionParser implements LineParser {
     for (const c of nested.calls) {
       if (!isRecord(c) || c.name !== SPAWN_TOOL || !isRecord(c.arguments)) continue
       const task = str(c.arguments.task)
-      if (task) this.spawns.add({ root: this.sessionId, parent: this.agentId, parentFile: this.fileId, label: str(c.arguments.agent), task, t0, t1 })
+      if (task) this.spawns.add({ id: str(c.id) ?? `${this.fileId}#${t1}`, root: this.sessionId, parent: this.agentId, parentFile: this.fileId, label: str(c.arguments.agent), task, t0, t1 })
     }
   }
 
@@ -434,7 +511,7 @@ export class PiSessionParser implements LineParser {
     const d = describePiTool(name, args, this.cwd)
     const task = name === SPAWN_TOOL ? str(args.task) : undefined
     if (task && this.spawns && this.sessionId && this.agentId && this.fileId) {
-      this.spawns.add({ root: this.sessionId, parent: this.agentId, parentFile: this.fileId, callId, label: str(args.agent), task, t0: ts })
+      this.spawns.add({ id: callId, root: this.sessionId, parent: this.agentId, parentFile: this.fileId, callId, label: str(args.agent), task, t0: ts })
     }
     this.send(ts, {
       kind: 'tool.started',

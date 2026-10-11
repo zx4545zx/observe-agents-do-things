@@ -463,3 +463,24 @@ test('pi subagents: a child that appears while the observer runs joins its launc
   assert.equal(s.tools.call_sub!.childAgentId, kid(1))
   assert.deepEqual(Object.keys(obs.world.sessions), [PARENT])
 })
+
+test('pi subagents: launches in the skipped middle of a large launcher file still link', async () => {
+  const dir = newDir()
+  const pad = (n: number, from: number): object[] =>
+    Array.from({ length: n }, (_, i) => ({ type: 'custom', id: `pad${from + i}`, parentId: null, timestamp: at(100 + from + i), customType: 'filler', data: { text: 'x'.repeat(1000) } }))
+  put(dir, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    ...pad(600, 0),
+    launch('call_sub', 5000, TASK),
+    launched('call_sub', 6000, BASE + 5000 + 10),
+    ...pad(8, 1000),
+  ])
+  put(dir, kid(1), 5040, childLines(5040, TASK), { sub: true })
+  const obs = new Observer({ harnesses: ['pi'], piDir: dir.root, sinceMs: 1e12, backfillBytes: 2000 })
+  await obs.start()
+  obs.stop()
+  assert.equal(obs.world.sessions[PARENT]!.meta.partialHistory, true, 'the launcher really was read in part')
+  assert.equal(obs.world.sessions[PARENT]!.tools.call_sub, undefined, 'and the launch itself was in the skipped part')
+  assert.deepEqual(Object.keys(obs.world.sessions), [PARENT])
+  assert.equal(obs.world.sessions[PARENT]!.agents[kid(1)]?.parentId, PARENT)
+})
