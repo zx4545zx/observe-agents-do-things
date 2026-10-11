@@ -222,6 +222,7 @@ export class PiSessionParser implements LineParser {
   /** Entries older than the header were copied from the parent session by a fork. */
   private inheritedBefore: number | undefined
   private linked: Spawn | undefined
+  private goalKey: string | undefined
   /** Until the first message says whether this is a launched subagent, events are held back. */
   private decided = false
   private held: Array<{ ts: number; body: Body }> = []
@@ -320,6 +321,18 @@ export class PiSessionParser implements LineParser {
         return this.usage(rec.usage, ts)
       case 'usage':
         return this.usage(rec.usage, ts, str(rec.model))
+      case 'custom':
+        // The pi-goal extension rewrites its record on every token update; only a change of goal or status matters.
+        if (rec.customType === 'pi-goal' && isRecord(rec.data) && isRecord(rec.data.goal)) {
+          const objective = str(rec.data.goal.objective)
+          const status = str(rec.data.goal.status)
+          const key = `${str(rec.data.goal.id)}|${status}`
+          if (objective && key !== this.goalKey) {
+            this.goalKey = key
+            this.send(ts, { kind: 'session.updated', meta: { goal: clip(objective, 400), goalStatus: status } })
+          }
+        }
+        return
     }
   }
 

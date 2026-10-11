@@ -7,7 +7,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { applyEvent, createWorld, type EventDraft, type ObserverEvent } from '@oadt/protocol'
+import { applyEvent, createWorld, workflowOf, workflowRuns, type EventDraft, type ObserverEvent } from '@oadt/protocol'
 import { PiAdapter, PiSessionParser } from './adapters/pi.js'
 import { Observer } from './observer.js'
 
@@ -51,6 +51,9 @@ function sessionLines(): object[] {
     entry('u3', 30, { role: 'user', content: 'once more', timestamp: 30 }),
     assistant('a5', 31, [{ type: 'toolCall', id: 'call_stuck', name: 'bash', arguments: { command: 'sleep 999' } }], 'toolUse'),
     assistant('a6', 32, [{ type: 'thinking', thinking: '', thinkingSignature: 'enc', redacted: true }], 'aborted', { usage: usage(0, 0) }),
+    { type: 'custom', id: 'g1', parentId: null, timestamp: iso(1), customType: 'pi-goal', data: { goal: { id: 'goal-1', objective: 'Ship the thing', status: 'active', tokensUsed: 0 } } },
+    { type: 'custom', id: 'g2', parentId: null, timestamp: iso(5), customType: 'pi-goal', data: { goal: { id: 'goal-1', objective: 'Ship the thing', status: 'active', tokensUsed: 900 } } },
+    { type: 'custom', id: 'g3', parentId: null, timestamp: iso(35), customType: 'pi-goal', data: { goal: { id: 'goal-1', objective: 'Ship the thing', status: 'complete', tokensUsed: 1200 } } },
     entry('b1', 40, { role: 'bashExecution', command: 'git status', output: 'clean', exitCode: 0, cancelled: false, truncated: false, timestamp: 40 }),
   ]
 }
@@ -117,6 +120,7 @@ test('pi: normalises a session', () => {
   const metas = find('session.updated').map((d) => d.meta)
   assert.deepEqual(metas.map((m) => m.model).filter(Boolean), ['pi-test-1'], 'model is announced once')
   assert.ok(metas.some((m) => m.title === 'Why does test/api.test.ts fail?' && m.titleSource === 'prompt'))
+  assert.deepEqual(metas.filter((m) => m.goal).map((m) => [m.goal, m.goalStatus]), [['Ship the thing', 'active'], ['Ship the thing', 'complete']], 'a goal is reported when it or its status changes, not on every token update')
 
   const u = find('usage')
   assert.deepEqual(u[0]!.delta, { input: 1000, output: 40, cacheRead: 500, cacheWrite: 0, reasoning: 25 })
@@ -483,4 +487,33 @@ test('pi subagents: launches in the skipped middle of a large launcher file stil
   assert.equal(obs.world.sessions[PARENT]!.tools.call_sub, undefined, 'and the launch itself was in the skipped part')
   assert.deepEqual(Object.keys(obs.world.sessions), [PARENT])
   assert.equal(obs.world.sessions[PARENT]!.agents[kid(1)]?.parentId, PARENT)
+})
+
+test('pi subagents: PStack workers get workflow metadata and ordinary subagents do not', async () => {
+  const dir = newDir()
+  put(dir, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    launch('call_p1', 1000, 'task one', 'poteto-agent'),
+    launch('call_p2', 2000, 'task two', 'poteto-agent'),
+    launch('call_r', 3000, 'task three', 'reviewer'),
+    launched('call_p1', 9000, BASE + 1000 + 10),
+    launched('call_p2', 9100, BASE + 2000 + 10),
+    launched('call_r', 9200, BASE + 3000 + 10),
+  ])
+  put(dir, kid(1), 1040, childLines(1040, 'task one'), { sub: true })
+  put(dir, kid(2), 2040, [
+    system, user('cu', 2100, 'Task: task two'),
+    asst('g1', 2200, [{ type: 'toolCall', id: 'call_n', name: 'subagent', arguments: { agent: 'poteto-agent', task: 'nested task' } }], 'toolUse'),
+    launched('call_n', 4000, BASE + 2300),
+  ], { sub: true })
+  put(dir, kid(3), 2290, childLines(2290, 'nested task'), { sub: true })
+  put(dir, kid(4), 3040, childLines(3040, 'task three'), { sub: true })
+
+  const s = (await observe(dir)).sessions[PARENT]!
+  assert.deepEqual([kid(1), kid(2), kid(3), kid(4)].map((id) => s.agents[id]!.role), ['poteto-agent', 'poteto-agent', 'poteto-agent', 'reviewer'])
+  assert.deepEqual([PARENT, kid(1), kid(2), kid(3), kid(4)].map((id) => workflowOf(s, id)?.runId), [undefined, kid(1), kid(2), kid(2), undefined])
+  assert.equal(workflowOf(s, kid(3))!.tier, 'worker')
+  assert.equal(s.agents[kid(3)]!.parentId, kid(2), 'the tree is the one the adapter built')
+  assert.equal(s.agents[kid(1)]!.parentToolCallId, 'call_p1')
+  assert.deepEqual(workflowRuns(s).map((r) => [r.index, r.agentIds.length, r.status]), [[1, 1, 'done'], [2, 2, 'done']])
 })
