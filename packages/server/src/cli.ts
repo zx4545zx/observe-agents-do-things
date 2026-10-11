@@ -2,7 +2,7 @@
 /**
  * oadt — observe agents do things.
  *
- *   oadt                       watch Claude Code + Codex, serve the live view
+ *   oadt                       watch Claude Code, Codex + Pi, serve the live view
  *   oadt --demo                simulated agents, no real data
  *   oadt replay <files…>       replay transcripts in compressed real time
  *   oadt tail [--json]         stream normalised events to the terminal
@@ -47,13 +47,14 @@ Options
       --token <secret>    require this bearer token (auto-generated for non-loopback hosts)
       --no-auth           never require a token (e.g. in a container published only on 127.0.0.1)
       --since <dur>       backfill window, e.g. 30m, 6h, 2d (default 6h; 24h for 'sessions')
-      --harness <list>    claude-code,codex (default both)
+      --harness <list>    claude-code,codex,pi (default all)
       --demo              simulated sessions instead of real transcripts
       --speed <n>         replay/demo speed multiplier (default 10 for replay, 1 for demo)
       --loop              loop replays
       --redact <mode>     none | content | strict (default none)
       --claude-dir <dir>  Claude config dir (default $CLAUDE_CONFIG_DIR or ~/.claude)
       --codex-home <dir>  Codex home (default $CODEX_HOME or ~/.codex)
+      --pi-dir <dir>      Pi agent dir (default $PI_CODING_AGENT_DIR or ~/.pi/agent)
       --ui <dir>          serve a different frontend build
       --no-ui             API only
       --cors <origin>     allow a cross-origin frontend (repeatable)
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
       redact: { type: 'string' },
       'claude-dir': { type: 'string' },
       'codex-home': { type: 'string' },
+      'pi-dir': { type: 'string' },
       ui: { type: 'string' },
       'no-ui': { type: 'boolean' },
       cors: { type: 'string', multiple: true },
@@ -150,6 +152,7 @@ async function main(): Promise<void> {
     sinceMs: parseDuration(values.since ?? (command === 'sessions' ? '24h' : '6h')),
     claudeDir: values['claude-dir'],
     codexHome: values['codex-home'],
+    piDir: values['pi-dir'],
     redact,
     onError: (err, path) => { if (errors.length < 50) errors.push(`${path ?? ''} ${String(err)}`) },
   })

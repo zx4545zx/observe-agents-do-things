@@ -18,6 +18,7 @@ export const CATEGORY: Record<ToolCategory, { color: string; label: string; glyp
 export const HARNESS: Record<string, { color: string; label: string; short: string }> = {
   'claude-code': { color: '#ff8a4c', label: 'Claude Code', short: 'Claude' },
   codex: { color: '#3ee0c5', label: 'Codex', short: 'Codex' },
+  pi: { color: '#9aa5ff', label: 'Pi', short: 'Pi' },
 }
 
 export function harnessInfo(h: Harness): { color: string; label: string; short: string } {

@@ -302,7 +302,7 @@ function notify(urgent: AttentionItem[], world: WorldState): void {
     if (notified.has(i.id)) continue
     notified.add(i.id)
     const s = world.sessions[i.sessionId]
-    const who = s?.harness === 'codex' ? 'Codex' : 'Claude Code'
+    const who = s?.harness === 'codex' ? 'Codex' : s?.harness === 'pi' ? 'Pi' : 'Claude Code'
     void vscode.window.showWarningMessage(`${who}: ${i.title} (${sessionTitle(world, i.sessionId)})`, 'Open dashboard').then((pick) => {
       if (pick) void openDashboard()
     })

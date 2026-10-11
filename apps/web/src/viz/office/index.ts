@@ -70,7 +70,7 @@ const TEMPLATE = `
     <div class="of-empty" hidden>
       <div class="of-empty-art">☕</div>
       <h2>The office is quiet</h2>
-      <p>Start a Claude Code or Codex session and your agents will clock in here.</p>
+      <p>Start a Claude Code, Codex or Pi session and your agents will clock in here.</p>
     </div>
   </div>
   <aside class="of-desk">

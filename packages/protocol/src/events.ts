@@ -1,7 +1,7 @@
 /**
  * The observe-agents-do-things wire protocol.
  *
- * Every harness (Claude Code, Codex, your own agent…) is normalised into one
+ * Every harness (Claude Code, Codex, Pi, your own agent…) is normalised into one
  * small vocabulary of events. Frontends never see harness-specific formats:
  * they consume `ObserverEvent`s and, optionally, fold them into a `WorldState`
  * with the pure `applyEvent` projection exported from this package.
@@ -10,7 +10,7 @@
 export const PROTOCOL_VERSION = 1 as const
 
 /** Which agent harness produced the activity. Open-ended so custom adapters can add their own. */
-export type Harness = 'claude-code' | 'codex' | (string & {})
+export type Harness = 'claude-code' | 'codex' | 'pi' | (string & {})
 
 /** Harness-agnostic tool buckets. Frontends colour and group by these. */
 export type ToolCategory =

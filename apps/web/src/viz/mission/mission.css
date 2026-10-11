@@ -21,7 +21,7 @@
   --warn-bg: #cca70018; --err-bg: #f8514918; --ok-bg: #2ea04318; --info-bg: #3794ff18;
   --c-read: #3794ff; --c-search: #b180d7; --c-edit: #cca700; --c-write: #2ea043; --c-shell: #f14c4c;
   --c-web: #29b8db; --c-agent: #e5c07b; --c-plan: #8b949e; --c-mcp: #c586c0; --c-interact: #d7ba7d; --c-other: #6e7681;
-  --claude: #d97757; --codex: #10a37f;
+  --claude: #d97757; --codex: #10a37f; --pi: #8b9cff;
   color-scheme: dark;
 }
 .mc[data-theme="light"] {
@@ -34,7 +34,7 @@
   --warn-bg: #bf880314; --err-bg: #e5140010; --ok-bg: #2da04214; --info-bg: #1a85ff12;
   --c-read: #1a85ff; --c-search: #8250df; --c-edit: #bf8803; --c-write: #2da042; --c-shell: #e51400;
   --c-web: #0e8fa8; --c-agent: #b8860b; --c-plan: #6e7781; --c-mcp: #a626a4; --c-interact: #9a6700; --c-other: #8b949e;
-  --claude: #c2603e; --codex: #0b8a6b;
+  --claude: #c2603e; --codex: #0b8a6b; --pi: #5b6bd6;
   color-scheme: light;
 }
 .mc[data-theme="gruvbox-dark"] {
@@ -47,7 +47,7 @@
   --warn-bg: #fabd2f18; --err-bg: #fb493418; --ok-bg: #b8bb2618; --info-bg: #83a59818;
   --c-read: #83a598; --c-search: #d3869b; --c-edit: #fabd2f; --c-write: #b8bb26; --c-shell: #fb4934;
   --c-web: #8ec07c; --c-agent: #fe8019; --c-plan: #a89984; --c-mcp: #d3869b; --c-interact: #fe8019; --c-other: #928374;
-  --claude: #fe8019; --codex: #8ec07c;
+  --claude: #fe8019; --codex: #8ec07c; --pi: #d3869b;
   color-scheme: dark;
 }
 .mc[data-theme="gruvbox-light"] {
@@ -60,7 +60,7 @@
   --warn-bg: #b5761418; --err-bg: #9d000614; --ok-bg: #79740e18; --info-bg: #07667814;
   --c-read: #076678; --c-search: #8f3f71; --c-edit: #b57614; --c-write: #79740e; --c-shell: #9d0006;
   --c-web: #427b58; --c-agent: #af3a03; --c-plan: #7c6f64; --c-mcp: #8f3f71; --c-interact: #af3a03; --c-other: #928374;
-  --claude: #af3a03; --codex: #427b58;
+  --claude: #af3a03; --codex: #427b58; --pi: #8f3f71;
   color-scheme: light;
 }
 
@@ -179,6 +179,7 @@
 .badge { font-size: 10.5px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border-strong); color: var(--fg-dim); white-space: nowrap; }
 .badge.claude-code { color: var(--claude); border-color: color-mix(in srgb, var(--claude) 45%, transparent); }
 .badge.codex { color: var(--codex); border-color: color-mix(in srgb, var(--codex) 45%, transparent); }
+.badge.pi { color: var(--pi); border-color: color-mix(in srgb, var(--pi) 45%, transparent); }
 
 /* Log table (detail Activity tab and the Log view) */
 .mc-log { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }

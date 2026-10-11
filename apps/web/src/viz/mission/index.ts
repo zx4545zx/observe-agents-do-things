@@ -146,7 +146,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     vctx.setChromeTheme(theme)
     const cs = getComputedStyle(mc)
     const get = (n: string) => cs.getPropertyValue(n).trim()
-    colors = { grid: get('--border'), text: get('--fg-faint'), accent: get('--accent'), ok: get('--ok'), warn: get('--warn'), err: get('--err'), claude: get('--claude'), codex: get('--codex'), faint: get('--fg-faint') }
+    colors = { grid: get('--border'), text: get('--fg-faint'), accent: get('--accent'), ok: get('--ok'), warn: get('--warn'), err: get('--err'), claude: get('--claude'), codex: get('--codex'), pi: get('--pi'), faint: get('--fg-faint') }
     for (const c of CATEGORIES) colors[c] = get(`--c-${c}`)
     dirty = true
   }
@@ -460,7 +460,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
       const s = world.sessions[sid]
       if (!s || !t.el.isConnected) continue
       const beats = toolStarts.filter((x) => x.sid === sid && x.ts > now - PULSE_MS).map((x) => ({ ts: x.ts, color: colors[x.cat] ?? colors.accent! }))
-      const line = s.harness === 'codex' ? colors.codex! : s.harness === 'claude-code' ? colors.claude! : colors.accent!
+      const line = s.harness === 'codex' ? colors.codex! : s.harness === 'claude-code' ? colors.claude! : s.harness === 'pi' ? colors.pi! : colors.accent!
       heartbeat(t.pulse, beats, now, PULSE_MS, { line, idle: colors.faint!, active: s.status === 'working' || s.status === 'waiting' })
     }
   }
