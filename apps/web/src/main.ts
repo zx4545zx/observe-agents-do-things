@@ -7,6 +7,7 @@
 import './host.css'
 import { connect } from '@oadt/client'
 import { AttentionService } from './host/attention'
+import { desktopBridge } from './host/desktop-page'
 import { DISPLAY_SETTINGS, NOTIFICATION_SETTINGS, resolveTheme, ZOOM_LEVELS, Settings, type SettingDef, type ThemeName } from './host/settings'
 import { SettingsPanel } from './host/settings-panel'
 import { VISUALIZATIONS } from './viz'
@@ -108,6 +109,13 @@ function show(id: string): void {
 
 settings.on('viz', (id) => show(String(id)))
 
+// Commands from the desktop shell: its menu, and clicks on its notifications.
+desktopBridge()?.onCommand((cmd) => {
+  if (cmd.type === 'open-settings') panel.open('desktop')
+  else if (cmd.type === 'mission') settings.set('viz', 'mission')
+  else current?.instance.focusSession?.(cmd.sessionId)
+})
+
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && ['=', '+', '-', '_', '0'].includes(e.key)) {
     e.preventDefault()
@@ -117,7 +125,8 @@ window.addEventListener('keydown', (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key === ',') {
     e.preventDefault()
-    panel.toggle()
+    if (panel.isOpen) panel.close()
+    else panel.open(desktopBridge() ? 'desktop' : undefined)
     return
   }
   if (panel.isOpen) {

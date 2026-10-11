@@ -12,6 +12,7 @@ import type { ObserverClient } from '@oadt/client'
 import { h } from '../shared/dom'
 import type { Visualization } from '../viz/types'
 import type { AttentionService } from './attention'
+import { DesktopPage, desktopBridge } from './desktop-page'
 import { DISPLAY_SETTINGS, NOTIFICATION_SETTINGS, type SettingDef, type Settings } from './settings'
 
 export interface PanelOptions {
@@ -22,9 +23,10 @@ export interface PanelOptions {
   active: () => string | undefined
 }
 
-type Page = 'visualizations' | 'display' | 'notifications' | 'shortcuts' | 'about' | `viz:${string}`
+type Page = 'desktop' | 'visualizations' | 'display' | 'notifications' | 'shortcuts' | 'about' | `viz:${string}`
 
 const PAGES: Array<{ id: Page; title: string }> = [
+  ...(desktopBridge() ? [{ id: 'desktop' as const, title: 'Desktop' }] : []),
   { id: 'visualizations', title: 'Visualizations' },
   { id: 'display', title: 'Display' },
   { id: 'notifications', title: 'Notifications' },
@@ -43,14 +45,17 @@ const SHORTCUTS: Array<[string, string]> = [
 
 export class SettingsPanel {
   readonly el: HTMLElement
-  private page: Page = 'visualizations'
+  private page: Page = desktopBridge() ? 'desktop' : 'visualizations'
   private query = ''
   private returnFocus: Element | null = null
+  private desktop?: DesktopPage
 
   constructor(private opts: PanelOptions) {
     this.el = h('div.oadt-settings', { hidden: true })
     this.el.addEventListener('mousedown', (e) => { if (e.target === this.el) this.close() })
     opts.settings.on('*', () => { if (this.isOpen) this.render() })
+    const bridge = desktopBridge()
+    if (bridge) this.desktop = new DesktopPage(bridge, () => { if (this.isOpen && this.page === 'desktop') this.keepFocus(() => this.render()) })
   }
 
   get isOpen(): boolean {
@@ -61,6 +66,7 @@ export class SettingsPanel {
   open(page?: string): void {
     if (page) this.page = (PAGES.some((p) => p.id === page) ? page : `viz:${page}`) as Page
     this.returnFocus = document.activeElement
+    if (page === 'desktop') this.desktop?.refresh()
     this.query = ''
     this.el.hidden = false
     this.render()
@@ -76,6 +82,13 @@ export class SettingsPanel {
   toggle(): void {
     if (this.isOpen) this.close()
     else this.open()
+  }
+
+  /** Re-render without losing the scroll position of the content. */
+  private keepFocus(fn: () => void): void {
+    const top = (this.el.querySelector('.oadt-settings-content') as HTMLElement | null)?.scrollTop ?? 0
+    fn()
+    ;(this.el.querySelector('.oadt-settings-content') as HTMLElement | null)?.scrollTo(0, top)
   }
 
   private go(page: Page): void {
@@ -113,6 +126,7 @@ export class SettingsPanel {
   }
 
   private pageContent(): Array<Node | string> {
+    if (this.page === 'desktop' && this.desktop) return this.desktop.content()
     if (this.page === 'visualizations') return this.visualizationsPage()
     if (this.page === 'display') return this.displayPage()
     if (this.page === 'notifications') return this.notificationsPage()

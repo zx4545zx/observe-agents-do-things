@@ -12,8 +12,9 @@ if (!existsSync(`${ui}/index.html`)) {
 rmSync(`${here}dist`, { recursive: true, force: true })
 rmSync(`${here}ui`, { recursive: true, force: true })
 await build({
-  entryPoints: [`${here}src/main.ts`],
-  outfile: `${here}dist/main.cjs`,
+  entryPoints: { main: `${here}src/main.ts`, preload: `${here}src/preload.ts` },
+  outdir: `${here}dist`,
+  outExtension: { '.js': '.cjs' },
   bundle: true,
   platform: 'node',
   format: 'cjs',

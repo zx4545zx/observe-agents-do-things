@@ -9,6 +9,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit -p .",
+    "test": "node --test src/*.test.ts",
     "dev": "node build.mjs && electron .",
     "package": "node build.mjs && electron-builder --mac --dir",
     "dist": "node build.mjs && electron-builder --mac dmg"

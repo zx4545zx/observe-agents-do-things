@@ -23,7 +23,7 @@
     "start": "node packages/server/dist/cli.js",
     "demo": "node packages/server/dist/cli.js --demo --open",
     "dev": "node scripts/dev.mjs",
-    "test": "npm run build:packages && node scripts/test.mjs",
+    "test": "npm run build:packages && node scripts/test.mjs && npm test --workspace apps/desktop",
     "typecheck": "tsc -b packages/protocol packages/core packages/client packages/react packages/server && npm run typecheck --workspace apps/web && npm run typecheck --workspace examples/react-dashboard && npm run typecheck --workspace apps/vscode && npm run typecheck --workspace apps/desktop",
     "clean": "node scripts/clean.mjs",
     "build:examples": "npm run build --workspace examples/react-dashboard",
