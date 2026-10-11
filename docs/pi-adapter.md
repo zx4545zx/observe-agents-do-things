@@ -84,6 +84,7 @@ Findings that shaped the adapter.
 | `stopReason` `error` | `note` warn, then `turn.ended` error | The note carries `errorMessage`. |
 | `assistant.model`, `model_change.modelId` | `session.updated` model | Announced when it changes. The provider has no field in `SessionMeta` and is not shown. |
 | `compaction` | `note` info, and `usage` from its `usage` | |
+| `custom` `pi-goal` (pi-goal extension) | `session.updated` goal and goal status | Reported when the goal or its status changes, not on each token update. |
 | `branch_summary`, standalone `usage` entry | `note`, `usage` | Defined by Pi's docs, not seen locally. |
 | `bashExecution` message | `tool.started` and `tool.finished` | A command the user ran with `!`. `ok` when not cancelled and exit code 0. |
 | `subagent` tool call, `nestedCalls` entry | `tool.started` (category `agent`), and a link for the child file | See [pi-subagents.md](pi-subagents.md). |

@@ -32,6 +32,18 @@ Outcome A: a generic link can be proven from persisted data.
 
 Real store (270 files): 79 sessions and 191 subagent files. **189 linked** (183 with a parent tool call, 6 through `nestedCalls`), **2 not linked** (fork copies with no entries of their own). Cross-checks: 30 of 30 fork children agree with Pi's `parentSession`, and 178 of 178 comparable links have the launch's recorded output equal to the child's final message. No child had more than one candidate. The observer loads all of it in about a second as 81 sessions with 270 agents.
 
+## Milestone 3: PStack enrichment
+
+[pstack-enrichment.md](pstack-enrichment.md) has the research and the evidence.
+
+- `packages/protocol/src/workflows.ts`: `workflowIndex`, `workflowOf`, `workflowRuns`, `workflowLabels`, and a `WORKFLOWS` table with one entry, PStack. A pure read-only layer over the agent tree. It adds no events and no state, and the Pi adapter is unchanged by it.
+- An agent is a PStack worker when the harness recorded its definition as `poteto-agent` (or the plugin and effort variants). Runs are one top-level worker with everything PStack below it. Each agent gets `runId`, `runIndex`, `tier` (lead or worker), `depth` and `hostAgentId`. A run gets a status aggregated from the agents.
+- Mission Control's Agents tab shows `PStack · run N · …` badges, and search finds sessions by workflow name.
+- Not derivable from the data, and not invented: role names (every worker is `poteto-agent`), phase, and Poteto as a separate concept from PStack.
+- The Pi adapter now also reports the `pi-goal` extension's goal as the session's goal and goal status.
+
+Real store: 23 PStack agents (15 leads, 8 workers) in 4 sessions, 15 runs, 166 ordinary subagents left generic. All 23 agree with the independent worker-system-prompt signal.
+
 ## Architecture decisions
 
 - **Reuse.** No new watcher, store or state model. Subagents use `agent.spawned` and the projection's existing parent and tool linking. Projects are a selector over `WorldState`.
@@ -45,7 +57,8 @@ Real store (270 files): 79 sessions and 191 subagent files. **189 linked** (183 
 | Check | Result |
 |---|---|
 | Baseline before milestone 2 | typecheck, `npm test` 43 of 43, build all passed |
-| After | typecheck passes. `npm test` 56 of 56 (13 new). `npm run build` passes |
+| After milestone 2 | `npm test` 56 of 56 (13 new) |
+| After milestone 3 | typecheck passes. `npm test` 62 of 62 (6 new). `npm run build` passes |
 | Mutation checks | removing the ambiguity rule, the fork check or the skipped-middle scan each fails a test |
 | Real UI | server on real `~/.pi` and `~/.claude`: 30 sessions, project list, filtering, persisted selection after reload, narrow layout |
 | Real store | counts above |
@@ -63,6 +76,6 @@ Commands: `npm run typecheck`, `npm test`, `npm run build`, `node packages/serve
 - Persisted project selection is verified in the browser, not in an automated test, because the web app has no test runner. The selection and fallback logic is tested.
 - Agent Office does not filter by project.
 
-## Next: PStack and Poteto enrichment
+## Next: custom monitoring UI
 
-Ready to start. It can rely on the parent and child agents with `parentToolCallId`, on `name`, `role` and the full delegation `task` of each child, on each child's own events, and on project keys. It cannot get plans, phases or reasons for a launch from Pi data. Those need the delegation text or state an extension writes elsewhere.
+The data it needs is in place: parent and child agents with `parentToolCallId`, each child's `name`, `role` and delegated `task`, its own events, project keys, and per-session PStack runs with tier, depth and status. PStack workers still have no role name or phase, because the data has none. A design that needs them needs PStack to record them first, for example as a structured argument on the `subagent` launch.

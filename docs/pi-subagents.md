@@ -117,6 +117,8 @@ Before linking it was 270 sessions.
 
 ## For PStack and Poteto enrichment
 
+Built, as a read-only layer: see [pstack-enrichment.md](pstack-enrichment.md). What it relies on is below.
+
 What a later layer can rely on, from the normalized events and with no new parsing.
 
 - Parent and child agents, with `parentToolCallId` where the launch was a call.
