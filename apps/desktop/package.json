@@ -1,0 +1,23 @@
+{
+  "name": "@oadt/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "observe-agents-do-things desktop app: Electron around the same observer and web UI.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "dev": "node build.mjs && electron .",
+    "package": "node build.mjs && electron-builder --mac --dir",
+    "dist": "node build.mjs && electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "@oadt/core": "0.1.0",
+    "@oadt/protocol": "0.1.0",
+    "@oadt/server": "0.1.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  }
+}

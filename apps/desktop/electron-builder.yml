@@ -1,0 +1,14 @@
+appId: dev.oadt.observe-agents
+productName: Observe Agents
+artifactName: ${productName}-${version}-${arch}.${ext}
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - ui/**
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  target: [dmg]
+  identity: null

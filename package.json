@@ -2,7 +2,7 @@
   "name": "observe-agents-do-things",
   "version": "0.1.0",
   "private": true,
-  "description": "Watch Claude Code and Codex agents work in real time — a read-only observer with a clean event API and swappable frontends.",
+  "description": "Watch Claude Code and Codex agents work in real time \u2014 a read-only observer with a clean event API and swappable frontends.",
   "license": "MIT",
   "type": "module",
   "workspaces": [
@@ -13,7 +13,8 @@
     "packages/server",
     "apps/web",
     "examples/react-dashboard",
-    "apps/vscode"
+    "apps/vscode",
+    "apps/desktop"
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build:web",
@@ -23,11 +24,15 @@
     "demo": "node packages/server/dist/cli.js --demo --open",
     "dev": "node scripts/dev.mjs",
     "test": "npm run build:packages && node scripts/test.mjs",
-    "typecheck": "tsc -b packages/protocol packages/core packages/client packages/react packages/server && npm run typecheck --workspace apps/web && npm run typecheck --workspace examples/react-dashboard && npm run typecheck --workspace apps/vscode",
+    "typecheck": "tsc -b packages/protocol packages/core packages/client packages/react packages/server && npm run typecheck --workspace apps/web && npm run typecheck --workspace examples/react-dashboard && npm run typecheck --workspace apps/vscode && npm run typecheck --workspace apps/desktop",
     "clean": "node scripts/clean.mjs",
     "build:examples": "npm run build --workspace examples/react-dashboard",
     "build:cli": "npm run build && node scripts/build-cli.mjs",
-    "build:vscode": "npm run build && npm run package --workspace apps/vscode"
+    "build:vscode": "npm run build && npm run package --workspace apps/vscode",
+    "desktop:dev": "npm run build && npm run dev --workspace apps/desktop",
+    "desktop:build": "npm run build && npm run build --workspace apps/desktop",
+    "desktop:package": "npm run desktop:build && npm run package --workspace apps/desktop",
+    "desktop:dist": "npm run desktop:build && npm run dist --workspace apps/desktop"
   },
   "engines": {
     "node": ">=20.11"
