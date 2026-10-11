@@ -10,6 +10,7 @@
 import type { EventDraft, ObserverEvent, WorldState } from '@oadt/protocol'
 import { ClaudeCodeAdapter } from './adapters/claude-code.js'
 import { CodexAdapter } from './adapters/codex.js'
+import { PiAdapter } from './adapters/pi.js'
 import type { Emit, TranscriptAdapter } from './adapters/types.js'
 import type { RedactMode } from './redact.js'
 import { DEFAULT_STATUS, statusTransitions, type StatusOptions } from './status.js'
@@ -24,10 +25,10 @@ export interface Source {
   describe?(): Record<string, unknown>
 }
 
-export type BuiltinHarness = 'claude-code' | 'codex'
+export type BuiltinHarness = 'claude-code' | 'codex' | 'pi'
 
 export interface ObserverOptions {
-  /** Built-in harnesses to watch. Defaults to both. */
+  /** Built-in harnesses to watch. Defaults to all. */
   harnesses?: BuiltinHarness[]
   /** Backfill transcripts modified within this window. Default 6 hours. */
   sinceMs?: number
@@ -35,6 +36,7 @@ export interface ObserverOptions {
   backfillBytes?: number
   claudeDir?: string
   codexHome?: string
+  piDir?: string
   /** Extra transcript adapters (see docs/ADAPTERS.md). */
   adapters?: TranscriptAdapter[]
   /** Extra event sources (demo, replay, custom). */
@@ -89,12 +91,15 @@ export class Observer {
       backfillBytes: opts.backfillBytes ?? 8 * 1024 * 1024,
       onError: opts.onError,
     }
-    const harnesses = opts.harnesses ?? (opts.sources?.length ? [] : ['claude-code', 'codex'])
+    const harnesses = opts.harnesses ?? (opts.sources?.length ? [] : ['claude-code', 'codex', 'pi'])
     if (harnesses.includes('claude-code')) {
       this.sources.push(new TranscriptSource(new ClaudeCodeAdapter({ claudeDir: opts.claudeDir, maxText: opts.maxText }), common))
     }
     if (harnesses.includes('codex')) {
       this.sources.push(new TranscriptSource(new CodexAdapter({ codexHome: opts.codexHome, maxText: opts.maxText }), common))
+    }
+    if (harnesses.includes('pi')) {
+      this.sources.push(new TranscriptSource(new PiAdapter({ piDir: opts.piDir, maxText: opts.maxText }), common))
     }
     for (const a of opts.adapters ?? []) this.sources.push(new TranscriptSource(a, common))
     for (const s of opts.sources ?? []) this.sources.push(s)

@@ -2,6 +2,7 @@
  * Turn raw harness tool calls into harness-agnostic descriptions:
  * a category, a one-line title, and the files they touch.
  */
+import { isAbsolute, resolve } from 'node:path'
 import type { FileOp, FileRef, ToolCategory } from '@oadt/protocol'
 import { basename, clip, firstLine, isRecord, relPath, str } from './text.js'
 
@@ -128,6 +129,36 @@ function describeMcp(name: string, input: Record<string, unknown>): ToolDescript
     files: file(input.file_path ?? input.path, 'read').filter((f) => /[\\/]/.test(f.path)),
     mcpServer: server,
   }
+}
+
+// ─── Pi ───────────────────────────────────────────────────────────────────
+
+/** Pi tool arguments name files relative to the session cwd; make them absolute so "files touched" is unambiguous. */
+export function piPath(p: unknown, cwd?: string): string | undefined {
+  if (typeof p !== 'string' || !p) return undefined
+  return cwd && !isAbsolute(p) ? resolve(cwd, p) : p
+}
+
+export function describePiTool(name: string, args: Record<string, unknown>, cwd?: string): ToolDescription {
+  const path = piPath(args.path ?? args.file_path, cwd)
+  const rel = (p: unknown) => (typeof p === 'string' ? relPath(p, cwd) : '')
+  switch (name) {
+    case 'read':
+      return { category: 'read', title: `Read ${rel(path)}`, files: file(path, 'read') }
+    case 'write':
+      return { category: 'write', title: `Write ${rel(path)}`, files: file(path, 'write') }
+    case 'edit':
+      return { category: 'edit', title: `Edit ${rel(path)}`, files: file(path, 'edit') }
+    case 'bash':
+      return { category: 'shell', title: `$ ${firstLine(String(args.command ?? ''), 100)}`, files: [] }
+    case 'grep':
+      return { category: 'search', title: `Grep "${clip(String(args.pattern ?? ''), 60)}"${path ? ` in ${rel(path)}` : ''}`, files: [] }
+    case 'find':
+      return { category: 'search', title: `Find ${clip(String(args.pattern ?? ''), 60)}${path ? ` in ${rel(path)}` : ''}`, files: [] }
+    case 'ls':
+      return { category: 'search', title: `List ${rel(path) || '.'}`, files: [] }
+  }
+  return { category: 'other', title: name, files: [] }
 }
 
 // ─── Codex ────────────────────────────────────────────────────────────────

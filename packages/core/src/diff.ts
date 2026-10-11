@@ -107,6 +107,21 @@ export function claudeChanges(tool: string, input: Record<string, unknown>): Fil
   return undefined
 }
 
+/** Pi: `edit` takes `{ path, edits: [{ oldText, newText }] }`, `write` takes `{ path, content }`. `path` is already absolute. */
+export function piChanges(tool: string, input: Record<string, unknown>, path: string | undefined): FileChange[] | undefined {
+  if (!path) return undefined
+  if (tool === 'write' && typeof input.content === 'string') return [finish(path, 'write', split(input.content).map((l) => '+' + l))]
+  if (tool !== 'edit') return undefined
+  const edits = Array.isArray(input.edits) ? input.edits : [input]
+  const lines: string[] = []
+  for (const e of edits as Array<Record<string, unknown>>) {
+    if (typeof e?.oldText !== 'string' || typeof e?.newText !== 'string') continue
+    if (lines.length) lines.push('@')
+    lines.push(...withContext(lineDiff(split(e.oldText), split(e.newText))))
+  }
+  return lines.length ? [finish(path, 'edit', lines)] : undefined
+}
+
 /**
  * Codex: an apply_patch body, either given directly or embedded in an `exec`
  * script (as a template literal or an escaped string).

@@ -14,8 +14,8 @@
  */
 import type { EventDraft, ToolCategory, WorldState } from '@oadt/protocol'
 
-/** Modes in which the harness never stops a tool to ask (Claude Code and Codex names). */
-const NEVER_ASKS = new Set(['bypassPermissions', 'dontAsk', 'auto', 'never'])
+/** Modes in which the harness never stops a tool to ask (Claude Code, Codex and Pi names; Pi has no approval gate). */
+const NEVER_ASKS = new Set(['bypassPermissions', 'dontAsk', 'auto', 'never', 'none'])
 
 /** Whether a pending tool could be waiting on a permission prompt, given the session's permission mode. */
 export function mayAwaitApproval(mode: string | undefined, category: ToolCategory): boolean {
