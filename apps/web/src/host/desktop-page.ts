@@ -54,7 +54,7 @@ export class DesktopPage {
 
   private observerRow(s: DesktopState): HTMLElement {
     const text = this.busy ? this.busy : STATE_TEXT[s.observer.state]
-    const off = !!this.busy || s.observer.state === 'restarting'
+    const off = this.locked() || s.observer.state === 'restarting'
     return h('div.oadt-setting', null,
       h('div', null,
         h('div.oadt-setting-label', null, 'Status: ', h('b', null, text)),
@@ -72,7 +72,7 @@ export class DesktopPage {
     const hours = s.settings.backfillHours
     const preset = PRESETS.find(([, v]) => v === hours)
     const isCustom = this.custom || !preset
-    const select = h('select', { id: 'desk-backfill', disabled: !!this.busy },
+    const select = h('select', { id: 'desk-backfill', disabled: this.locked() },
       ...PRESETS.map(([label, v]) => { const o = h('option', { value: String(v) }, label) as HTMLOptionElement; o.selected = !isCustom && v === hours; return o }),
       (() => { const o = h('option', { value: 'custom' }, 'Custom…') as HTMLOptionElement; o.selected = isCustom; return o })(),
     ) as HTMLSelectElement
@@ -90,7 +90,7 @@ export class DesktopPage {
       h('div', null, h('label.oadt-setting-label', { for: 'desk-backfill' }, 'History range'), h('div.oadt-settings-desc', null, 'Sessions active within this long are loaded. Changing it reloads the observer.')),
       h('div.oadt-viz-actions', null, select,
         days ? h('span', null, days, ' days') : '',
-        days ? h('button.oadt-btn.primary', { disabled: !!this.busy, onclick: () => void this.save({ backfillHours: Number(days!.value) * 24 }) }, 'Apply') : ''),
+        days ? h('button.oadt-btn.primary', { disabled: this.locked(), onclick: () => void this.save({ backfillHours: Number(days!.value) * 24 }) }, 'Apply') : ''),
     )
   }
 
@@ -105,15 +105,15 @@ export class DesktopPage {
         x.state === 'missing' ? h('div.oadt-settings-warn', null, 'This folder does not exist. Nothing will appear until it does.') : '',
       ),
       h('div.oadt-viz-actions', null,
-        h('button.oadt-btn', { disabled: !!this.busy, onclick: () => void this.pick(x.id) }, 'Choose Folder…'),
-        cfg.path ? h('button.oadt-btn', { disabled: !!this.busy, onclick: () => void this.save({ harnesses: { [x.id]: { path: '' } } }) }, 'Use Default') : '',
-        this.switch(cfg.enabled, (v) => this.save({ harnesses: { [x.id]: { enabled: v } } }), `${x.label} enabled`, !!this.busy),
+        h('button.oadt-btn', { disabled: this.locked(), onclick: () => void this.pick(x.id) }, 'Choose Folder…'),
+        cfg.path ? h('button.oadt-btn', { disabled: this.locked(), onclick: () => void this.save({ harnesses: { [x.id]: { path: '' } } }) }, 'Use Default') : '',
+        this.switch(cfg.enabled, (v) => this.save({ harnesses: { [x.id]: { enabled: v } } }), `${x.label} enabled`, this.locked()),
       ),
     )
   }
 
   private toggle(label: string, desc: string, on: boolean, change: (v: boolean) => void, disabled = false): HTMLElement {
-    return h('div.oadt-setting', null, h('div', null, h('div.oadt-setting-label', null, label), h('div.oadt-settings-desc', null, desc)), this.switch(on, change, label, disabled || !!this.busy))
+    return h('div.oadt-setting', null, h('div', null, h('div.oadt-setting-label', null, label), h('div.oadt-settings-desc', null, desc)), this.switch(on, change, label, disabled || this.locked()))
   }
 
   private switch(on: boolean, change: (v: boolean) => void, label: string, disabled: boolean): HTMLElement {
@@ -121,6 +121,11 @@ export class DesktopPage {
     input.checked = on
     input.addEventListener('change', () => change(input.checked))
     return h('span.oadt-switch', null, input, h('span', { 'aria-hidden': 'true' }))
+  }
+
+  /** Controls are disabled only while a restart is visibly in progress. */
+  private locked(): boolean {
+    return !!this.busy && this.busy !== 'Applying settings…'
   }
 
   // ─── actions ─────────────────────────────────────────────────────────
@@ -131,13 +136,14 @@ export class DesktopPage {
   }
 
   private save(patch: unknown): Promise<void> {
-    return this.run('Applying settings…', () => this.bridge.saveSettings(patch))
+    return this.run('Applying settings…', () => this.bridge.saveSettings(patch), false)
   }
 
-  private async run(busy: string, job: () => Promise<DesktopResult>): Promise<void> {
+  /** `show` draws the busy state while waiting. Quick edits skip it so a toggle does not flash. */
+  private async run(busy: string, job: () => Promise<DesktopResult>, show = true): Promise<void> {
     this.busy = busy
     this.error = undefined
-    this.rerender()
+    if (show) this.rerender()
     try {
       const r = await job()
       this.state = r.state

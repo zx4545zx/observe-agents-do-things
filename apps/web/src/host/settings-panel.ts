@@ -55,7 +55,7 @@ export class SettingsPanel {
     this.el.addEventListener('mousedown', (e) => { if (e.target === this.el) this.close() })
     opts.settings.on('*', () => { if (this.isOpen) this.render() })
     const bridge = desktopBridge()
-    if (bridge) this.desktop = new DesktopPage(bridge, () => { if (this.isOpen && this.page === 'desktop') this.keepFocus(() => this.render()) })
+    if (bridge) this.desktop = new DesktopPage(bridge, () => { if (this.isOpen && this.page === 'desktop') this.refreshContent() })
   }
 
   get isOpen(): boolean {
@@ -84,11 +84,16 @@ export class SettingsPanel {
     else this.open()
   }
 
-  /** Re-render without losing the scroll position of the content. */
-  private keepFocus(fn: () => void): void {
-    const top = (this.el.querySelector('.oadt-settings-content') as HTMLElement | null)?.scrollTop ?? 0
-    fn()
-    ;(this.el.querySelector('.oadt-settings-content') as HTMLElement | null)?.scrollTo(0, top)
+  /** Swap only the page content, keeping the dialog, its animation, the scroll position and focus. */
+  private refreshContent(): void {
+    const content = this.el.querySelector('.oadt-settings-content') as HTMLElement | null
+    if (!content) return this.render()
+    const top = content.scrollTop
+    const focused = document.activeElement as HTMLElement | null
+    const label = focused && content.contains(focused) ? focused.getAttribute('aria-label') ?? focused.id : ''
+    content.replaceChildren(...this.pageContent().map((c) => (c instanceof Node ? c : document.createTextNode(c))))
+    content.scrollTop = top
+    if (label) (content.querySelector(`[aria-label="${CSS.escape(label)}"], #${CSS.escape(label)}`) as HTMLElement | null)?.focus()
   }
 
   private go(page: Page): void {
