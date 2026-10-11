@@ -9,6 +9,7 @@
 import './mission.css'
 import {
   agentTree,
+  clip,
   filterWorld,
   formatAgo,
   formatCount,
@@ -26,6 +27,8 @@ import {
   shortPath,
   totalTokens,
   UNKNOWN_PROJECT,
+  workflowIndex,
+  workflowLabels,
   type AgentNode,
   type AttentionItem,
   type ChangeEntry,
@@ -34,6 +37,7 @@ import {
   type SessionState,
   type ToolCallState,
   type ToolCategory,
+  type WorkflowIndex,
   type WorldState,
 } from '@oadt/protocol'
 import { resolveTheme, THEME_SETTING } from '../../host/settings'
@@ -298,7 +302,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const urgent = new Set(attention.open().filter((a) => a.severity === 'high').map((a) => a.sessionId))
     return sessionList(world)
       .filter((s) => scope === 'all' || isLive(s) || (scope === 'recent' && now - s.lastActivityAt < RECENT_MS) || s.id === ui.selected)
-      .filter((s) => !text || [s.meta.title, s.meta.project, s.meta.gitBranch, s.meta.cwd, s.harness, s.id].some((v) => v?.toLowerCase().includes(text)))
+      .filter((s) => !text || [s.meta.title, s.meta.project, s.meta.gitBranch, s.meta.cwd, s.harness, s.id, workflowLabels(s).join(' ')].some((v) => v?.toLowerCase().includes(text)))
       .sort((a, b) => Number(urgent.has(b.id)) - Number(urgent.has(a.id)) || Number(isLive(b)) - Number(isLive(a)) || b.lastActivityAt - a.lastActivityAt)
   }
   const sessionName = (s: SessionState | undefined, fallback: string) => s?.meta.title ?? s?.meta.project ?? fallback.slice(0, 8)
@@ -768,6 +772,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
   let hero: { sid: string; buddy: Buddy } | undefined
   /** Agent rows in the Agents tab, kept across repaints so their buddies keep animating. */
   let agentRows: KeyedList<{ a: AgentNode; depth: number }> | undefined
+  let workflows: WorkflowIndex = { byAgent: new Map(), runs: [] }
 
   function renderDetail(world: WorldState, now: number): void {
     const s = ui.selected ? world.sessions[ui.selected] : undefined
@@ -823,7 +828,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
               buddies.set(a.id, b)
               return h('div.ag', { style: `padding-left:${8 + depth * 16}px` },
                 b.el,
-                h('span.nm', null, a.id === s.rootAgentId ? 'main' : a.name, a.role ? h('span.faint', null, ` ${a.role}`) : ''),
+                h('span.nm', null, a.id === s.rootAgentId ? 'main' : a.name, a.role && a.role !== a.name ? h('span.faint', null, ` ${a.role}`) : '', h('span.wf')),
                 h('span.num'),
                 h('div.cur'),
               )
@@ -835,6 +840,14 @@ function mount(root: HTMLElement, vctx: VizContext) {
               buddies.get(a.id)?.set(act)
               const cur = a.activeTools.map((id) => sess.tools[id]).filter((x): x is ToolCallState => !!x).pop()
               setText(el.querySelector('.num')!, `${a.toolCount} tools · ${formatCount(totalTokens(a.usage))}`)
+              const wf = workflows.byAgent.get(a.id)
+              const run = wf && workflows.runs.find((r) => r.id === wf.runId)
+              const badge = el.querySelector<HTMLElement>('.wf')!
+              badge.hidden = !wf
+              if (wf && run) {
+                setText(badge, wf.tier === 'lead' ? `${wf.label} · run ${wf.runIndex} · ${run.agentIds.length} ${run.agentIds.length === 1 ? 'agent' : 'agents'} · ${run.status}` : `${wf.label} · run ${wf.runIndex}`)
+                badge.title = `${wf.label} run ${wf.runIndex}, ${wf.tier === 'lead' ? 'launched by ' + (run.hostAgentId ? agentName(sess, run.hostAgentId) : 'unknown') : 'worker of ' + agentName(sess, run.leadId)}${run.task ? ' · ' + clip(run.task, 120) : ''}`
+              }
               setText(el.querySelector('.cur')!, a.status === 'waiting'
                 ? `${LOOKS[act].label} · ${a.statusReason ?? 'waiting'} · ${formatDuration(t - a.statusSince)}`
                 : cur ? `${LOOKS[act].label} · ${cur.title}` : `${LOOKS[act].label} · ${formatAgo(a.lastActivityAt, t)}`)
@@ -844,6 +857,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
         })
         return [box]
       })
+      workflows = workflowIndex(s)
       agentRows?.sync(tree ? flatten(tree) : [])
     } else {
       const files = hotFiles(s, 80)

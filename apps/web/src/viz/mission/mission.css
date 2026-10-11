@@ -254,6 +254,8 @@
 .mc-msg.agent { border-left: 3px solid var(--c-agent); }
 .mc-agents .ag { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--border); }
 .mc-agents .ag .bb { grid-row: span 2; }
+.mc-agents .ag .wf { display: inline-block; margin-left: 8px; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 9px; font-size: 10.5px; font-weight: 600; color: var(--accent); vertical-align: 1px; }
+.mc-agents .ag .wf[hidden] { display: none; }
 .mc-agents .ag .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-agents .ag .cur { grid-column: 2 / -1; font: 11px var(--mono); color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-agents .ag .num { font: 11px var(--mono); color: var(--fg-dim); }
