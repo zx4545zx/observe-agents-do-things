@@ -1,54 +1,68 @@
 # Pi support: handoff
 
-Milestone 1 of native Pi monitoring. Pi is a built-in harness (`pi`) beside Claude Code
-and Codex. The format and mapping are in [pi-adapter.md](pi-adapter.md).
+Pi is a built-in harness (`pi`) beside Claude Code and Codex. Format and mapping are in
+[pi-adapter.md](pi-adapter.md), subagents in [pi-subagents.md](pi-subagents.md).
 
-## Implemented
+## Milestone 1: native Pi monitoring
 
-- `PiAdapter` and `PiSessionParser` in `packages/core/src/adapters/pi.ts`, registered in `Observer` and exported from `@oadt/core`.
-- Pi is in the default harness list. `--harness pi` selects it alone. `--pi-dir`, `$PI_CODING_AGENT_DIR` and `$PI_CODING_AGENT_SESSION_DIR` locate it.
-- `describePiTool` (`tools.ts`) and `piChanges` (`diff.ts`) give Pi tool calls a category, a title, the files touched and a line diff for edits and writes.
-- `'none'` joins the permission modes that never ask (`status.ts`).
-- UI recognises the harness: colour and label (`theme.ts`), badge and heartbeat colour in Mission Control, the VS Code notification label, and the empty-state text. No Pi-specific rendering.
-- 7 tests in `packages/core/src/pi.test.ts`, and the docs.
+- `PiAdapter` and `PiSessionParser` (`packages/core/src/adapters/pi.ts`), registered in `Observer` and exported from `@oadt/core`. It uses the shared watcher, tailer and backfill, with no code of its own for those.
+- Pi is in the default harness list. `--harness pi`, `--pi-dir`, `$PI_CODING_AGENT_DIR` and `$PI_CODING_AGENT_SESSION_DIR` control it.
+- `describePiTool` and `piChanges` give tool calls a category, title, files touched and diffs.
+- `permissionMode: 'none'` for Pi, because it has no approval gate. Without it a long `bash` call would be shown as awaiting approval.
+- Turns are derived from message roles and stop reasons, because Pi writes none.
+
+## Milestone 2: project filtering and subagent linking
+
+### Project filtering
+
+- `packages/protocol/src/projects.ts`: `projectKey`, `listProjects`, `resolveProject`, `filterWorld`, `UNKNOWN_PROJECT`. Pure functions over a `WorldState`, so any frontend can use them. A project is the session's `meta.cwd`, normalised (trailing slash, `\`, Windows case). Same folder names in different places get longer labels. No cwd means *Unknown Project*.
+- Mission Control gets a project list beside the activity bar (chips on narrow screens, hidden when there is nothing to choose between). A scoped world is computed once per event from the live state and drives the sessions, agents, activity, diffs, detail and numbers. The choice is stored in `localStorage` through the existing settings (`mission.project`).
+- It does not branch on harness. A missing remembered project shows everything and is not forgotten.
+- Not filtered on purpose: the title-bar attention count and the Needs attention view, and desktop notifications, so an approval elsewhere is never hidden. Agent Office is untouched.
+
+### Pi subagents
+
+Outcome A: a generic link can be proven from persisted data.
+
+- Pi stores no parent. `pi-open-agents` runs each subagent as its own Pi process and the child file names no parent.
+- The link is rebuilt from the child's first message (`Task: <task>`), the launcher's recorded `subagent` call or `codemode` `nestedCalls` entry with the same task, and a start time that fits. Exactly one match links, otherwise nothing does. Fork children must also agree with `parentSession`.
+- A linked child becomes an agent of the launcher's session, with `parentAgentId` and, for calls, `parentToolCallId`. Its conversation, tools, model, usage and file changes stay on that agent.
+- Files that fork a session no longer replay the history they copied.
+- A launcher too large to be read whole has its launch records read from the skipped middle once.
+
+Real store (270 files): 79 sessions and 191 subagent files. **189 linked** (183 with a parent tool call, 6 through `nestedCalls`), **2 not linked** (fork copies with no entries of their own). Cross-checks: 30 of 30 fork children agree with Pi's `parentSession`, and 178 of 178 comparable links have the launch's recorded output equal to the child's final message. No child had more than one candidate. The observer loads all of it in about a second as 81 sessions with 270 agents.
 
 ## Architecture decisions
 
-- **Reuse, no new watcher.** The adapter implements `TranscriptAdapter`. Discovery, watching, tailing, backfill and restart are unchanged shared code.
-- **One parser, one state.** The parser keeps only the open tool-call ids, the model, and flags for turn and title. Every other fact comes from the line in hand, so restarting re-reads the file and lands in the same state.
-- **Turns are derived.** Pi has none. A turn starts at the first user or assistant message after the last turn ended, and ends on an assistant `stop`, `length`, `error` or `aborted`. Calls still open at that point are closed as interrupted.
-- **No approval waiting for Pi.** Pi core cannot prompt for approval, so the header sets `permissionMode: 'none'`. This stops the existing "awaiting approval" heuristic from flagging every long `bash` call.
-- **Tool table is display only.** Seven Pi built-ins get a category. Every other tool, including extension tools, appears as `other` under its own name.
-- **No PStack or Poteto logic.** Nothing in the parser looks at agent names, commands or skills.
-- **Fixtures are inline.** The existing tests build synthetic transcripts in code, so the Pi tests do too. No file in the repo contains real session text.
+- **Reuse.** No new watcher, store or state model. Subagents use `agent.spawned` and the projection's existing parent and tool linking. Projects are a selector over `WorldState`.
+- **One shared index, no persistence.** Parent parsers record launches in an index owned by the adapter, and a child parser claims one. It is rebuilt from the files every start, so restarts agree.
+- **Held until decided.** A session's first events are held until its first user message says whether it is a launched subagent, so a child never appears as a session first and an agent later.
+- **No heuristics.** Matching needs exact task text, a time fit, an unclaimed launch and a single candidate. Ambiguity means no link.
+- **No PStack or Poteto logic.** The extension's agent name is passed through as `name` and `role` and never inspected.
 
 ## Verified
 
 | Check | Result |
 |---|---|
-| Baseline before changes | `npm ci`, typecheck, `npm test` (36 of 36), build all passed. There is no lint script. |
-| After changes | typecheck passes. `npm test` 43 of 43, 7 new. `npm run build` passes. |
-| Real data sweep | Parser over all 270 local Pi files. No exceptions. 38,242 tool starts, 38,238 finishes, 0 finishes without a start, 0 duplicate starts. The 4 unmatched starts are calls that never got a result. |
-| Real UI | Server run with `--harness pi --since 24h` against the real `~/.pi`. 59 sessions backfilled in 232 ms. Mission Control showed them with the Pi badge, project, model, tool, error and token counts. |
-| Live Pi run | Not done. Driving a real `pi` turn would spend model credits. Tailing is covered by a test that appends to a session file, including a half-written line. |
+| Baseline before milestone 2 | typecheck, `npm test` 43 of 43, build all passed |
+| After | typecheck passes. `npm test` 56 of 56 (13 new). `npm run build` passes |
+| Mutation checks | removing the ambiguity rule, the fork check or the skipped-middle scan each fails a test |
+| Real UI | server on real `~/.pi` and `~/.claude`: 30 sessions, project list, filtering, persisted selection after reload, narrow layout |
+| Real store | counts above |
 
-Commands: `npm ci`, `npm run typecheck`, `npm test`, `npm run build`,
-`node packages/server/dist/cli.js sessions --harness pi --since 3d`.
+Commands: `npm run typecheck`, `npm test`, `npm run build`, `node packages/server/dist/cli.js sessions --harness pi --since 3d`.
 
-## Known limits and unsupported events
+## Known limits
 
-- Subagents are separate, unlinked sessions. See "Subagents" in pi-adapter.md.
-- No context window, so no context percentage. No provider in the UI. No thinking level.
-- `custom_message`, `custom`, `context_edit`, `label` and `system` entries are ignored. Extension-injected text is therefore not shown.
-- `usage`, `branch_summary`, `session_info` and `bashExecution` are handled from Pi's documentation only. None appear in the local data, so they are unit-tested but not seen on a real file.
-- Branches are read in file order, not by the current leaf.
-- Pi's `sessionDir` setting is not read.
-- Malformed lines are skipped without a log entry, as in the other adapters.
+- Only the `pi-open-agents` convention is linked. Other subagent extensions stay ordinary sessions.
+- Tasks over 8,000 characters (`Task: @file`), identical simultaneous launches, and a launcher outside `--since` are not linked.
+- A `codemode` launch links only after its call finishes, so live it shows as a separate session until a restart.
+- A session appears with its first user message.
+- No context window or provider for Pi. `custom_message`, `custom`, `context_edit`, `label` and `system` entries are ignored. Pi's `sessionDir` setting is not read.
+- `usage`, `branch_summary`, `session_info` and `bashExecution` are handled from Pi's docs and tested synthetically, not seen in the local data.
+- Persisted project selection is verified in the browser, not in an automated test, because the web app has no test runner. The selection and fallback logic is tested.
+- Agent Office does not filter by project.
 
-## Recommended next milestone
+## Next: PStack and Poteto enrichment
 
-1. Project and workspace filtering from `meta.cwd`.
-2. Pi subagent hierarchy. First find a reliable link between a parent's `subagent` call and the child file.
-3. PStack and Poteto enrichment as a layer over the normalized events.
-4. Custom monitoring UI.
-5. Desktop packaging.
+Ready to start. It can rely on the parent and child agents with `parentToolCallId`, on `name`, `role` and the full delegation `task` of each child, on each child's own events, and on project keys. It cannot get plans, phases or reasons for a launch from Pi data. Those need the delegation text or state an extension writes elsewhere.

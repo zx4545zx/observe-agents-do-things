@@ -17,7 +17,7 @@ checked against 270 real session files (about 70,000 messages) on the machine th
 | Session root | `<agent dir>/sessions`. `$PI_CODING_AGENT_SESSION_DIR` moves it when `--pi-dir` is not given. |
 | Layout | `sessions/--<cwd>--/<timestamp>_<session-id>.jsonl`. `<cwd>` is the working directory with the leading `/` dropped and `/`, `\` and `:` turned into `-`. |
 | File name | `2026-10-10T17-13-41-605Z_01a126ce-5fe5-7731-8b01-8c0433d2f3ba.jsonl`. Only names of this shape are read, so stray files in the tree are ignored. |
-| Depth | Up to two directories below the root. That covers `--<cwd>--/` and the `--<cwd>--/subagents/` directory some extensions use. |
+| Depth | Up to two directories below the root. That covers `--<cwd>--/` and the `--<cwd>--/subagents/` directory `pi-open-agents` uses. |
 | Session id | `id` in the header line. Falls back to the id in the file name when the header was not read. |
 | Working dir | `cwd` in the header. It is not decoded from the directory name, because that encoding is lossy. |
 
@@ -86,6 +86,9 @@ Findings that shaped the adapter.
 | `compaction` | `note` info, and `usage` from its `usage` | |
 | `branch_summary`, standalone `usage` entry | `note`, `usage` | Defined by Pi's docs, not seen locally. |
 | `bashExecution` message | `tool.started` and `tool.finished` | A command the user ran with `!`. `ok` when not cancelled and exit code 0. |
+| `subagent` tool call, `nestedCalls` entry | `tool.started` (category `agent`), and a link for the child file | See [pi-subagents.md](pi-subagents.md). |
+| First message `Task: …` of a launched child | `agent.spawned` and the child's events as an agent of the launcher's session | Only when the launch is matched exactly. |
+| Entries copied by a fork (older than the header) | not emitted | They are the parent's activity. |
 
 Tool names map through `describePiTool` in `tools.ts`. The table is for display only,
 and any other name is shown as `other` with its own name as the title.
@@ -109,17 +112,14 @@ and any other name is shown as `other` with its own name as the title.
   that adds its own gate is not visible in the transcript.
 - **Thinking level.** `thinking_level_change` has no OADT field.
 - **`system`, `custom`, `custom_message`, `context_edit`, `label`.** Not conversation. Extension and injected text is not shown as if the user typed it.
-- **Subagents.** See below.
+- **Subagents of other extensions.** Only `pi-open-agents` is understood, see pi-subagents.md.
 
 ## Subagents
 
-Some extensions run a subagent as a separate Pi session in `--<cwd>--/subagents/`.
-In the local data that is 191 of 270 files. Those files are ordinary Pi sessions, so
-they appear as their own sessions next to the main one, with the task prompt as the title.
-Nothing in the file says which session spawned them. `parentSession` is Pi's `/fork`
-link, not a spawn link, and the parent's `subagent` tool call is an extension's convention.
-The adapter does not guess. Linking them into the agent tree needs that extension's
-conventions and is left for the next milestone.
+Pi records no parent for a session. Sessions an extension launches as subagents are linked
+to the session that launched them from persisted facts, and join its session as agents.
+The method, the evidence (189 of 191 linked on the real store) and the unsupported cases
+are in [pi-subagents.md](pi-subagents.md).
 
 ## Limits
 
@@ -127,6 +127,8 @@ conventions and is left for the next milestone.
   at startup. They are picked up when written to.
 - Large files are read as the first 512 KiB plus the last 8 MiB, like the other adapters.
   `partialHistory` is set when that happens.
+- A session is shown from its first user message. Until then its events are held back, because
+  that message decides whether the file is a launched subagent.
 - Each rescan lists the session tree and stats every `.jsonl`. That is cheap at hundreds
   of files. Thousands of historical files would make it grow linearly.
 - The Docker setup mounts `~/.claude` and `~/.codex` only. Mount `~/.pi/agent` the same way to watch Pi there.

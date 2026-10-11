@@ -90,6 +90,7 @@ Agent visualisers tend to *be* the harness, or to install themselves into it. Th
 - **Swappable visualizations.** Each visualization is a plugin that defines its whole view; the core only provides data. Two ship today: *Mission Control* (the default) and *Agent Office*. Adding one is a single module plus one line to register it.
 - **Agents with a face.** Every agent gets a blob buddy, drawn by [blobatar](https://github.com/Alain00/blobatar), that types while it edits, peers around while it searches, hops with a "!" when it needs your approval and dozes off when idle. What it acts out comes from `sessionActivity` / `agentActivity` in the protocol, so any frontend can use the same signal.
 - **Subagents in both harnesses.** Claude Code `Agent`/`Task` subagents are linked through their `meta.json` sidecars. Codex `spawn_agent` threads are rebuilt into one tree across separate rollout files.
+- **Filter by project.** Mission Control lists projects by working directory, across Claude Code, Codex and Pi, and narrows sessions, agents, activity, diffs and the numbers to one. The choice is remembered. Sessions with no working directory group under *Unknown Project*.
 - **Tells you when you're needed.** Sessions move between *working*, *waiting* (a tool pending with no transcript activity, almost always a permission prompt) and *idle*. A shared attention model, in the protocol so every frontend agrees, flags approvals waiting, finished turns, failure streaks, nearly full context and long-running tools. Optional desktop notifications, a chime and a tab-title count work in every visualization.
 - **Many sessions at once.** Every session across projects and harnesses side by side. Open one for the full picture: every tool call with its input and output, diffs, the conversation, the agent tree, files touched, tokens, context fill and reported cost.
 - **Huge transcripts are fine.** A byte-level, UTF-8-safe tailer reads the head plus a bounded tail, so multi-hundred-MB rollouts load in milliseconds.
@@ -247,7 +248,7 @@ Details in **[docs/API.md](docs/API.md)** and **[docs/PROTOCOL.md](docs/PROTOCOL
 | | Claude Code | Codex | Pi |
 |---|---|---|---|
 | Sessions & titles | ✓ custom titles, first prompt | ✓ `session_index` names, first prompt | ✓ `/name`, first prompt |
-| Subagents | ✓ `subagents/agent-*.jsonl` + `meta.json` → spawning tool call | ✓ `spawn_agent` threads via `session_meta.source.subagent` | shown as separate sessions, not linked yet |
+| Subagents | ✓ `subagents/agent-*.jsonl` + `meta.json` → spawning tool call | ✓ `spawn_agent` threads via `session_meta.source.subagent` | ✓ rebuilt from the `Task:` message and the launch the parent recorded (`pi-open-agents`), see [docs/pi-subagents.md](docs/pi-subagents.md) |
 | Tool calls | ✓ all tools, MCP (`mcp__server__tool`) | ✓ `exec` scripts (inner commands summarised), `apply_patch` files, MCP, web search | ✓ `read` `write` `edit` `bash` `grep` `find` `ls`, any other tool by name |
 | Success / failure | ✓ `is_error`, interrupts | ✓ exit codes, `Script failed`, aborts | ✓ `isError`, aborts, provider errors |
 | Turns | ✓ prompt → `end_turn` / interrupt | ✓ `task_started` / `task_complete` / `turn_aborted` | ✓ derived from message roles and stop reasons |
