@@ -68,6 +68,7 @@ export class SettingsPanel {
     this.returnFocus = document.activeElement
     if (page === 'desktop') this.desktop?.refresh()
     this.query = ''
+    this.el.replaceChildren()
     this.el.hidden = false
     this.render()
     ;(this.el.querySelector('input[type=search]') as HTMLInputElement | null)?.focus()
@@ -86,12 +87,11 @@ export class SettingsPanel {
 
   /** Swap only the page content, keeping the dialog, its animation, the scroll position and focus. */
   private refreshContent(): void {
-    const content = this.el.querySelector('.oadt-settings-content') as HTMLElement | null
-    if (!content) return this.render()
+    const content = this.el.querySelector('.oadt-settings-content') as HTMLElement
     const top = content.scrollTop
     const focused = document.activeElement as HTMLElement | null
     const label = focused && content.contains(focused) ? focused.getAttribute('aria-label') ?? focused.id : ''
-    content.replaceChildren(...this.pageContent().map((c) => (c instanceof Node ? c : document.createTextNode(c))))
+    content.replaceChildren(...(this.query ? this.searchResults() : this.pageContent()).map((c) => (c instanceof Node ? c : document.createTextNode(c))))
     content.scrollTop = top
     if (label) (content.querySelector(`[aria-label="${CSS.escape(label)}"], #${CSS.escape(label)}`) as HTMLElement | null)?.focus()
   }
@@ -105,16 +105,31 @@ export class SettingsPanel {
 
   // ─── Rendering ───────────────────────────────────────────────────────
 
+  /**
+   * Builds the dialog once per opening, then only updates it. Replacing the card on every change
+   * replays its entrance animation and makes the dialog flash.
+   */
   private render(): void {
-    const search = h('input', { type: 'search', placeholder: 'Search settings', value: this.query, 'aria-label': 'Search settings' }) as HTMLInputElement
+    if (!this.el.querySelector('.oadt-settings-card')) this.build()
+    const nav = this.el.querySelector('nav') as HTMLElement
+    const navActive = this.page.startsWith('viz:') ? 'visualizations' : this.page
+    nav.querySelectorAll('button').forEach((b, i) => {
+      const on = PAGES[i]!.id === navActive && !this.query
+      b.classList.toggle('on', on)
+      if (on) b.setAttribute('aria-current', 'page')
+      else b.removeAttribute('aria-current')
+    })
+    const search = this.el.querySelector('input[type=search]') as HTMLInputElement
+    if (search.value !== this.query) search.value = this.query
+    this.refreshContent()
+  }
+
+  private build(): void {
+    const search = h('input', { type: 'search', placeholder: 'Search settings', 'aria-label': 'Search settings' }) as HTMLInputElement
     search.addEventListener('input', () => {
       this.query = search.value
       this.render()
-      const again = this.el.querySelector('input[type=search]') as HTMLInputElement
-      again.focus()
-      again.setSelectionRange(again.value.length, again.value.length)
     })
-    const navActive = this.page.startsWith('viz:') ? 'visualizations' : this.page
     const card = h('div.oadt-settings-card', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Settings' },
       h('header', null,
         h('b', null, 'Settings'),
@@ -122,9 +137,8 @@ export class SettingsPanel {
         h('button.oadt-icon-btn', { onclick: () => this.close(), 'aria-label': 'Close settings', title: 'Close (Esc)' }, '×'),
       ),
       h('div.oadt-settings-body', null,
-        h('nav', { 'aria-label': 'Settings sections' }, ...PAGES.map((p) =>
-          h('button' + (p.id === navActive && !this.query ? '.on' : ''), { onclick: () => this.go(p.id), 'aria-current': p.id === navActive && !this.query ? 'page' : undefined }, p.title))),
-        h('div.oadt-settings-content', null, ...(this.query ? this.searchResults() : this.pageContent())),
+        h('nav', { 'aria-label': 'Settings sections' }, ...PAGES.map((p) => h('button', { onclick: () => this.go(p.id) }, p.title))),
+        h('div.oadt-settings-content'),
       ),
     )
     this.el.replaceChildren(card)
