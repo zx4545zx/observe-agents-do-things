@@ -361,6 +361,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     throughput: HTMLCanvasElement
     throughputLabel: HTMLElement
     attnWrap: HTMLElement
+    attnElse: HTMLElement
     attnCount: HTMLElement
     attn: KeyedList<AttentionItem>
     tiles: KeyedList<SessionState>
@@ -404,10 +405,12 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const ctx = h('div.mc-ctx')
     const attnScope = h('span.faint')
     const attnCount = h('span.faint')
+    const attnElse = h('div.mc-attn-else')
     const attnWrap = h('section.mc-section.mc-attn-wrap', null,
       h('div.mc-section-head', null, 'Needs attention', attnCount, attnScope, h('span.grow'), h('button', { onclick: () => attention.ackAll(), title: 'Acknowledge everything (X)' }, 'Clear all')),
       attnList,
       h('div.mc-allclear', null, '✓ Nothing needs you right now'),
+      attnElse,
     )
     const grid = h('div.mc-grid')
     const runsList = h('div.mc-runs')
@@ -496,7 +499,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
       update: (el, r) => updateOther(el, r),
       collapse: true,
     })
-    return { kpi, kpiCells, throughput, throughputLabel, attnWrap, attnCount, attn, tiles, tileParts, scopeBtns, diffs, diffEmpty, activity, activityEmpty, ctx, attnScope, runsWrap, runsCount, runsMore, runCards, othersWrap, othersCount, others }
+    return { kpi, kpiCells, throughput, throughputLabel, attnWrap, attnElse, attnCount, attn, tiles, tileParts, scopeBtns, diffs, diffEmpty, activity, activityEmpty, ctx, attnScope, runsWrap, runsCount, runsMore, runCards, othersWrap, othersCount, others }
   }
 
   function renderOverview(o: Overview, world: WorldState, now: number): void {
@@ -530,7 +533,10 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const open = attention.open().filter(mine)
     const everywhere = attention.open().filter((a) => a.severity !== 'low').length
     const filtered = world !== client.world
+    const elsewhere = filtered ? everywhere - needs : 0
     o.attnWrap.classList.toggle('is-empty', open.length === 0)
+    o.attnWrap.classList.toggle('elsewhere', elsewhere > 0)
+    o.attnElse.textContent = elsewhere > 0 ? `Nothing needs you here · ${elsewhere} ${elsewhere === 1 ? 'item needs' : 'items need'} attention in other projects` : ''
     o.attnCount.textContent = open.length ? ` · ${open.length}` : ''
     o.attnScope.textContent = filtered ? ` · this project${everywhere > needs ? ` · ${everywhere - needs} more in other projects` : ''}` : ' · all projects'
     setText(o.kpiCells.needs.querySelector('.k')!, filtered ? 'need you · here' : 'need you')

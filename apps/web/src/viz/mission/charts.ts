@@ -94,7 +94,8 @@ export function stackedArea(
 
   ctx.strokeStyle = opts.grid
   ctx.lineWidth = 1
-  for (const f of [0.5, 1]) {
+  // No data: no gridlines, they only read as stray borders.
+  for (const f of totals.some((t) => t > 0) ? [0.5, 1] : []) {
     const gy = Math.round(y(max * f)) + 0.5
     ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke()
   }
