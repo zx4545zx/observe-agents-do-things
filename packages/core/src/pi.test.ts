@@ -244,3 +244,222 @@ test('pi: live tailing emits each record once, waits out a half-written line, an
     'restart reconstructs the same state',
   )
 })
+
+// ─── Subagents ────────────────────────────────────────────────────────────
+
+const BASE = Date.UTC(2026, 0, 1, 12, 0, 0)
+const at = (ms: number) => new Date(BASE + ms).toISOString()
+const stamp = (ms: number) => at(ms).replace(/[:.]/g, '-')
+const PARENT = '01a00000-0000-7000-8000-0000000000a0'
+const kid = (n: number) => `01a00000-0000-7000-8000-0000000000b${n}`
+const TASK = 'Review the diff and report findings.'
+
+interface Dir { root: string; sessions: string }
+
+function newDir(): Dir {
+  const root = mkdtempSync(join(tmpdir(), 'oadt-pi-sub-'))
+  const sessions = join(root, 'sessions', '--work-app--')
+  mkdirSync(join(sessions, 'subagents'), { recursive: true })
+  return { root, sessions }
+}
+
+function put(dir: Dir, id: string, startMs: number, lines: object[], opts: { sub?: boolean; header?: object } = {}): string {
+  const header = { type: 'session', version: 3, id, timestamp: at(startMs), cwd: '/work/app', ...opts.header }
+  const path = join(opts.sub ? join(dir.sessions, 'subagents') : dir.sessions, `${stamp(startMs)}_${id}.jsonl`)
+  writeFileSync(path, jsonl([header, ...lines]))
+  return path
+}
+
+const msg = (id: string, ms: number, message: object) => ({ type: 'message', id, parentId: null, timestamp: at(ms), message })
+const asst = (id: string, ms: number, content: object[], stopReason: string, u = usage(10, 5)) =>
+  msg(id, ms, { role: 'assistant', content, provider: 'test', model: 'pi-test-1', usage: u, stopReason, timestamp: BASE + ms })
+const user = (id: string, ms: number, text: string) => msg(id, ms, { role: 'user', content: [{ type: 'text', text }], timestamp: BASE + ms })
+const launch = (callId: string, ms: number, task: string, agent = 'reviewer') =>
+  asst(`c-${callId}`, ms, [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent, task } }], 'toolUse')
+const launched = (callId: string, ms: number, startedAt: number | string | undefined, status = 'done') =>
+  msg(`r-${callId}`, ms, { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [{ type: 'text', text: 'RESULT' }], details: { agent: 'reviewer', status, output: 'RESULT', startedAt, elapsedMs: 100 }, isError: status !== 'done', timestamp: BASE + ms })
+const system = msg('sys', 0, { role: 'system', content: '', sections: {}, timestamp: BASE })
+
+/** What a launched child writes: its header just after `startedAt`, then `Task: ...`, some work, a final answer. */
+function childLines(startMs: number, task: string): object[] {
+  return [
+    system,
+    user('cu', startMs + 60, `Task: ${task}`),
+    asst('ca1', startMs + 100, [{ type: 'toolCall', id: 'k-read', name: 'read', arguments: { path: 'a.ts' } }], 'toolUse', usage(100, 7)),
+    msg('cr1', startMs + 120, { role: 'toolResult', toolCallId: 'k-read', toolName: 'read', content: [{ type: 'text', text: 'x' }], isError: false, timestamp: BASE + startMs + 120 }),
+    asst('ca2', startMs + 200, [{ type: 'text', text: 'RESULT' }], 'stop', usage(120, 9)),
+  ]
+}
+
+function parentWithChild(dir: Dir, opts: { task?: string; childStart?: number } = {}): void {
+  const task = opts.task ?? TASK
+  const childStart = opts.childStart ?? 5040
+  put(dir, PARENT, 0, [
+    system, user('u', 10, 'please review'),
+    launch('call_sub', 5000, task),
+    launched('call_sub', 6000, BASE + 5000 + 10, 'done'),
+    asst('pa', 6100, [{ type: 'text', text: 'done' }], 'stop'),
+  ])
+  put(dir, kid(1), childStart, childLines(childStart, task), { sub: true })
+}
+
+async function observe(dir: Dir) {
+  const obs = new Observer({ harnesses: ['pi'], piDir: dir.root, sinceMs: 1e12 })
+  await obs.start()
+  obs.stop()
+  return obs.world
+}
+
+test('pi subagents: a launched child joins its launcher as an agent of the same session', async () => {
+  const dir = newDir()
+  parentWithChild(dir)
+  const world = await observe(dir)
+  assert.deepEqual(Object.keys(world.sessions), [PARENT], 'the child is not a session of its own')
+  const s = world.sessions[PARENT]!
+  const child = s.agents[kid(1)]!
+  assert.equal(child.parentId, PARENT)
+  assert.equal(child.role, 'reviewer')
+  assert.equal(child.task, TASK)
+  assert.equal(s.tools.call_sub!.childAgentId, kid(1), 'tied to the spawning tool call')
+  assert.equal(s.tools.call_sub!.category, 'agent')
+  assert.equal(child.status, 'done')
+  assert.equal(child.toolCount, 1, 'its own tool call is attributed to it, not the parent')
+  assert.equal(child.usage.output, 7 + 9)
+  assert.equal(s.agents[PARENT]!.toolCount, 1)
+  assert.equal(s.meta.title, 'please review', 'the child does not rewrite the session title')
+  assert.equal(s.counts.userMessages, 1)
+})
+
+test('pi subagents: several children, and a child that launches its own', async () => {
+  const dir = newDir()
+  put(dir, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    asst('c1', 1000, [
+      { type: 'toolCall', id: 'call_a', name: 'subagent', arguments: { agent: 'explore', task: 'task A' } },
+      { type: 'toolCall', id: 'call_b', name: 'subagent', arguments: { agent: 'worker', task: 'task B' } },
+    ], 'toolUse'),
+    launched('call_a', 9000, BASE + 1000, 'done'),
+    launched('call_b', 9100, BASE + 1005, 'done'),
+  ])
+  put(dir, kid(1), 1040, childLines(1040, 'task A'), { sub: true })
+  put(dir, kid(2), 1050, [
+    system, user('cu', 1110, 'Task: task B'),
+    asst('g1', 1200, [{ type: 'toolCall', id: 'call_g', name: 'subagent', arguments: { agent: 'explore', task: 'grandchild task' } }], 'toolUse'),
+    launched('call_g', 4000, BASE + 1300, 'done'),
+    asst('g2', 4100, [{ type: 'text', text: 'ok' }], 'stop'),
+  ], { sub: true })
+  put(dir, kid(3), 1340, childLines(1340, 'grandchild task'), { sub: true })
+
+  const s = (await observe(dir)).sessions[PARENT]!
+  assert.deepEqual(Object.keys(await observe(dir).then((w) => w.sessions)), [PARENT])
+  assert.equal(s.agents[kid(1)]!.parentId, PARENT)
+  assert.equal(s.agents[kid(2)]!.parentId, PARENT)
+  assert.equal(s.agents[kid(3)]!.parentId, kid(2), 'nesting follows the launching agent')
+  assert.equal(s.agents[kid(1)]!.role, 'explore')
+  assert.equal(s.agents[kid(2)]!.role, 'worker')
+})
+
+test('pi subagents: a launch made inside codemode links through nestedCalls', async () => {
+  const dir = newDir()
+  put(dir, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    asst('c1', 1000, [{ type: 'toolCall', id: 'call_code', name: 'codemode', arguments: { code: 'await tools.subagent(...)' } }], 'toolUse'),
+    msg('rc', 9000, {
+      role: 'toolResult', toolCallId: 'call_code', toolName: 'codemode', content: [{ type: 'text', text: 'done' }], isError: false, timestamp: BASE + 9000,
+      nestedCalls: { complete: true, calls: [{ id: 'call_code/1', name: 'subagent', status: 'ok', arguments: { agent: 'reviewer', task: TASK } }, 'junk', { name: 'subagent', arguments: 'not an object' }] },
+    }),
+  ])
+  put(dir, kid(1), 1040, childLines(1040, TASK), { sub: true })
+  const s = (await observe(dir)).sessions[PARENT]!
+  const child = s.agents[kid(1)]!
+  assert.equal(child.parentId, PARENT)
+  assert.equal(child.parentToolCallId, undefined, 'the nested call has no tool.started to point at')
+  assert.equal(s.tools.call_code!.childAgentId, undefined)
+})
+
+test('pi subagents: a fork child does not replay the history it copied, and must agree with parentSession', async () => {
+  const dir = newDir()
+  const parentPath = put(dir, PARENT, 0, [
+    system, user('u', 10, 'please review'),
+    launch('call_sub', 5000, TASK),
+    launched('call_sub', 6000, BASE + 5000 + 10),
+  ])
+  const copied = [user('u', 10, 'please review'), launch('call_sub', 5000, TASK)]
+  put(dir, kid(1), 5040, [...copied, ...childLines(5040, TASK).slice(1)], { sub: true, header: { parentSession: parentPath } })
+  const s = (await observe(dir)).sessions[PARENT]!
+  assert.equal(s.agents[kid(1)]!.parentId, PARENT)
+  assert.equal(s.counts.tools, 2, 'the parent call and the child read; the copied launch is not counted again')
+  assert.equal(s.counts.userMessages, 1)
+
+  const other = newDir()
+  parentWithChild(other)
+  put(other, kid(2), 5030, childLines(5030, TASK), { sub: true, header: { parentSession: join(other.sessions, `${stamp(0)}_somebody-else.jsonl`) } })
+  const w = await observe(other)
+  assert.ok(w.sessions[kid(2)], 'a child forked from a different session than the launcher stays standalone')
+  assert.equal(w.sessions[PARENT]!.agents[kid(1)]!.parentId, PARENT)
+})
+
+test('pi subagents: no match, wrong time, ambiguous or malformed launches leave the child a normal session', async () => {
+  const none = newDir()
+  put(none, kid(1), 40, childLines(40, 'nobody asked for this'), { sub: true })
+  assert.ok((await observe(none)).sessions[kid(1)], 'unknown parent')
+
+  const late = newDir()
+  parentWithChild(late, { childStart: 5000 + 10 + 30_000 })
+  assert.ok((await observe(late)).sessions[kid(1)], 'started long after the recorded start time')
+
+  const twice = newDir()
+  put(twice, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    asst('c1', 1000, [
+      { type: 'toolCall', id: 'call_a', name: 'subagent', arguments: { agent: 'reviewer', task: TASK } },
+      { type: 'toolCall', id: 'call_b', name: 'subagent', arguments: { agent: 'reviewer', task: TASK } },
+    ], 'toolUse'),
+  ])
+  put(twice, kid(1), 1040, childLines(1040, TASK), { sub: true })
+  const w = await observe(twice)
+  assert.ok(w.sessions[kid(1)], 'two identical launches that cannot be told apart are not guessed')
+  assert.equal(Object.keys(w.sessions[PARENT]!.agents).length, 1)
+
+  const bad = newDir()
+  put(bad, PARENT, 0, [
+    system, user('u', 10, 'go'),
+    launch('call_sub', 5000, TASK),
+    launched('call_sub', 6000, 'yesterday'),
+    { type: 'message', id: 'weird', message: { role: 'toolResult', toolCallId: 'call_sub', nestedCalls: 7, details: [1] } },
+  ])
+  put(bad, kid(1), 5040, childLines(5040, TASK), { sub: true })
+  const linked = (await observe(bad)).sessions[PARENT]!
+  assert.equal(linked.agents[kid(1)]!.parentId, PARENT, 'a launch without a usable start time still matches on its recorded window')
+})
+
+test('pi subagents: the launcher is read first even when the child file is older on disk, and restarts agree', async () => {
+  const dir = newDir()
+  put(dir, kid(1), 5040, childLines(5040, TASK), { sub: true })
+  await new Promise((r) => setTimeout(r, 20))
+  parentWithChild(dir)
+  const first = await observe(dir)
+  const again = await observe(dir)
+  for (const w of [first, again]) {
+    assert.deepEqual(Object.keys(w.sessions), [PARENT])
+    assert.deepEqual(Object.keys(w.sessions[PARENT]!.agents).sort(), [PARENT, kid(1)].sort())
+  }
+  assert.deepEqual(again.sessions[PARENT]!.counts, first.sessions[PARENT]!.counts)
+  assert.deepEqual(again.sessions[PARENT]!.usage, first.sessions[PARENT]!.usage)
+})
+
+test('pi subagents: a child that appears while the observer runs joins its launcher', async () => {
+  const dir = newDir()
+  put(dir, PARENT, 0, [system, user('u', 10, 'go'), launch('call_sub', 5000, TASK)])
+  const obs = new Observer({ harnesses: ['pi'], piDir: dir.root, sinceMs: 1e12 })
+  await obs.start()
+  assert.deepEqual(Object.keys(obs.world.sessions), [PARENT])
+  put(dir, kid(1), 5040, childLines(5040, TASK), { sub: true })
+  const deadline = Date.now() + 8000
+  while (!obs.world.sessions[PARENT]!.agents[kid(1)] && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100))
+  obs.stop()
+  const s = obs.world.sessions[PARENT]!
+  assert.equal(s.agents[kid(1)]?.parentId, PARENT)
+  assert.equal(s.tools.call_sub!.childAgentId, kid(1))
+  assert.deepEqual(Object.keys(obs.world.sessions), [PARENT])
+})

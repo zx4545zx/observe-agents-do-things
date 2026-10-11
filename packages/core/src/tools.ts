@@ -157,6 +157,9 @@ export function describePiTool(name: string, args: Record<string, unknown>, cwd?
       return { category: 'search', title: `Find ${clip(String(args.pattern ?? ''), 60)}${path ? ` in ${rel(path)}` : ''}`, files: [] }
     case 'ls':
       return { category: 'search', title: `List ${rel(path) || '.'}`, files: [] }
+    case 'subagent':
+      // pi-open-agents; the extension names the agent definition and the task.
+      return { category: 'agent', title: `${str(args.agent) ?? 'subagent'}: ${clip(firstLine(String(args.task ?? ''), 70), 70)}`, files: [] }
   }
   return { category: 'other', title: name, files: [] }
 }

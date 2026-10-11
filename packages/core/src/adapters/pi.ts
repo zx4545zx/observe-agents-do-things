@@ -7,10 +7,15 @@
  * and tool calls together, followed later by one `toolResult` message per call.
  * Pi has no turn records, so turns are derived from message roles and stop reasons.
  *
- * Extensions may put further session files in a `subagents/` directory next to
- * the project's sessions. They are ordinary Pi sessions and are observed as such;
- * linking them to the session that spawned them is an extension convention, not Pi's.
+ * Subagents are not a Pi concept. The pi-open-agents extension runs each one as a
+ * separate Pi process whose session lands in `--<cwd>--/subagents/`. Nothing in that
+ * file names its parent, so the link is rebuilt from two facts that are both persisted:
+ * the child's first message is `Task: <task>`, and the parent recorded the `subagent`
+ * call (or a `nestedCalls` entry, for calls made inside `codemode`) with that same
+ * task and a start time matching the child's header. Only an exact, unambiguous match
+ * links; anything else stays an ordinary session. See docs/pi-subagents.md.
  */
+import { createHash } from 'node:crypto'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +30,12 @@ const HARNESS = 'pi'
 const OUTPUT_MAX = 2000
 /** <project dir>/<ISO timestamp with ':' and '.' dashed>_<session id>.jsonl */
 const SESSION_FILE = /^\d{4}-\d\d-\d\dT[\d-]+Z_(.+)\.jsonl$/
+/** pi-open-agents: the spawning tool, and the prefix it puts on the child's first message. */
+const SPAWN_TOOL = 'subagent'
+const TASK_PREFIX = 'Task: '
+/** The extension records `startedAt` just before the child process starts; its header follows within ms. */
+const START_SLACK_MS = 10_000
+const DAY_MS = 86_400_000
 /** Project dirs sit directly under the root; extensions add one more level (`subagents/`). */
 const MAX_DEPTH = 2
 
@@ -34,6 +45,67 @@ export interface PiAdapterOptions {
   maxText?: number
 }
 
+function fileId(path: string): string | undefined {
+  return SESSION_FILE.exec(basename(path))?.[1]
+}
+
+const taskKey = (task: string) => createHash('sha1').update(task.trim()).digest('hex')
+
+/** One subagent launch recorded in a parent session. */
+interface Spawn {
+  /** Where the child's events go: the root session and the launching agent. */
+  root: string
+  parent: string
+  /** Session file id of the launching session, checked against a fork child's `parentSession`. */
+  parentFile: string
+  callId?: string
+  label?: string
+  task: string
+  key: string
+  /** When the call was written, and when its result was. */
+  t0: number
+  t1?: number
+  startedAt?: number
+  claimed: boolean
+}
+
+/**
+ * Launches recorded by parent parsers, claimed by child parsers. Shared by all
+ * parsers of one adapter. Rebuilt from the files on every start, so it needs no persistence.
+ */
+export class PiSpawnIndex {
+  private byKey = new Map<string, Spawn[]>()
+  private byCall = new Map<string, Spawn>()
+
+  add(s: Omit<Spawn, 'key' | 'claimed'>): void {
+    const spawn: Spawn = { ...s, key: taskKey(s.task), claimed: false }
+    const list = this.byKey.get(spawn.key)
+    if (list) list.push(spawn)
+    else this.byKey.set(spawn.key, [spawn])
+    if (s.callId) this.byCall.set(s.callId, spawn)
+  }
+
+  finish(callId: string, t1: number, startedAt: number | undefined): void {
+    const s = this.byCall.get(callId)
+    if (!s) return
+    s.t1 = t1
+    s.startedAt = startedAt
+  }
+
+  /** The one unclaimed launch of `task` that fits a child started at `start`, or none when there are zero or several. */
+  claim(task: string, start: number, parentFile: string | undefined): Spawn | undefined {
+    const fits = (s: Spawn) => {
+      if (s.claimed || (parentFile && s.parentFile !== parentFile)) return false
+      if (s.startedAt !== undefined) return start - s.startedAt >= -1000 && start - s.startedAt <= START_SLACK_MS
+      return start >= s.t0 - 1000 && start <= (s.t1 ?? s.t0 + DAY_MS) + 2000
+    }
+    const found = (this.byKey.get(taskKey(task)) ?? []).filter(fits)
+    if (found.length !== 1) return undefined
+    found[0]!.claimed = true
+    return found[0]
+  }
+}
+
 function expandHome(p: string): string {
   return p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p
 }
@@ -41,6 +113,7 @@ function expandHome(p: string): string {
 export class PiAdapter implements TranscriptAdapter {
   readonly harness = HARNESS
   readonly sessionsDir: string
+  private spawns = new PiSpawnIndex()
 
   constructor(private opts: PiAdapterOptions = {}) {
     const dir = expandHome(opts.piDir ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent'))
@@ -81,8 +154,14 @@ export class PiAdapter implements TranscriptAdapter {
     return out
   }
 
+  /** Creation time from the file name, so a launching session is read before the children it launched. */
+  order(path: string): number {
+    const m = /^(\d{4}-\d\d-\d\dT)(\d\d)-(\d\d)-(\d\d)-(\d{3})Z_/.exec(basename(path))
+    return m ? Date.parse(`${m[1]}${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : 0
+  }
+
   createParser(path: string, emit: Emit): LineParser {
-    return new PiSessionParser(path, emit, { maxText: this.opts.maxText })
+    return new PiSessionParser(path, emit, { maxText: this.opts.maxText, spawns: this.spawns })
   }
 }
 
@@ -90,7 +169,9 @@ type Body = EventDraft extends infer T ? (T extends unknown ? Omit<T, 'ts' | 'ha
 
 /** Parses one Pi session file. */
 export class PiSessionParser implements LineParser {
+  /** The session events are filed under. A subagent's is its root session once linked, otherwise its own id. */
   sessionId: string | undefined
+  private agentId: string | undefined
   private cwd: string | undefined
   private model: string | undefined
   private titled = false
@@ -98,17 +179,29 @@ export class PiSessionParser implements LineParser {
   private partial = false
   private turnOpen = false
   private lastTs: number | undefined
-  private openCalls = new Set<string>()
+  private openCalls = new Map<string, number>()
   private readonly maxText: number
+  private readonly spawns?: PiSpawnIndex
+  private readonly fileId: string | undefined
+  private headerTs: number | undefined
+  private parentFile: string | undefined
+  /** Entries older than the header were copied from the parent session by a fork. */
+  private inheritedBefore: number | undefined
+  private linked: Spawn | undefined
+  /** Until the first message says whether this is a launched subagent, events are held back. */
+  private decided = false
+  private held: Array<{ ts: number; body: Body }> = []
 
   constructor(
     readonly path: string,
     private emit: Emit,
-    opts: { maxText?: number } = {},
+    opts: { maxText?: number; spawns?: PiSpawnIndex } = {},
   ) {
     this.maxText = opts.maxText ?? 4000
+    this.spawns = opts.spawns
     // Fallback id from the filename for files whose header was skipped.
-    this.sessionId = SESSION_FILE.exec(basename(path))?.[1]
+    this.fileId = fileId(path)
+    this.sessionId = this.agentId = this.fileId
   }
 
   markPartial(): void {
@@ -125,6 +218,7 @@ export class PiSessionParser implements LineParser {
     if (!isRecord(rec)) return
     const ts = toMs(rec.timestamp, this.lastTs ?? Date.now())
     if (rec.timestamp !== undefined) this.lastTs = ts
+    if (rec.type !== 'session' && this.inheritedBefore !== undefined && rec.timestamp !== undefined && ts < this.inheritedBefore) return
     switch (rec.type) {
       case 'session':
         return this.header(rec, ts)
@@ -154,14 +248,52 @@ export class PiSessionParser implements LineParser {
   }
 
   private send(ts: number, body: Body): void {
-    if (!this.sessionId) return
-    this.emit({ ts, harness: HARNESS, sessionId: this.sessionId, agentId: this.sessionId, ...body } as EventDraft)
+    if (!this.decided) this.held.push({ ts, body })
+    else this.emitNow(ts, body)
+  }
+
+  private emitNow(ts: number, body: Body): void {
+    if (!this.sessionId || !this.agentId) return
+    this.emit({ ts, harness: HARNESS, sessionId: this.sessionId, agentId: this.agentId, ...body } as EventDraft)
+  }
+
+  /**
+   * Settle whether this file is a launched subagent, then release what was held.
+   * A linked subagent's events join its launcher's session as a child agent.
+   */
+  private decide(link?: Spawn): void {
+    if (this.decided) return
+    this.decided = true
+    const held = this.held
+    this.held = []
+    if (!link) {
+      for (const h of held) this.emitNow(h.ts, h.body)
+      return
+    }
+    this.linked = link
+    this.sessionId = link.root
+    this.emitNow(this.headerTs ?? Date.now(), {
+      kind: 'agent.spawned',
+      parentAgentId: link.parent,
+      parentToolCallId: link.callId,
+      name: link.label ?? 'subagent',
+      role: link.label,
+      task: clip(link.task, 400),
+    })
+    // The child's own session metadata describes the launcher's session, not it; everything else is its activity.
+    for (const h of held) if (h.body.kind !== 'session.started' && h.body.kind !== 'session.updated') this.emitNow(h.ts, h.body)
   }
 
   private header(rec: Record<string, unknown>, ts: number): void {
     const id = str(rec.id)
-    if (id) this.sessionId = id
+    if (id) this.sessionId = this.agentId = id
     this.cwd = str(rec.cwd)
+    this.headerTs = ts
+    const parent = str(rec.parentSession)
+    if (parent) {
+      this.parentFile = fileId(parent)
+      this.inheritedBefore = ts
+    }
     this.send(ts, {
       kind: 'session.started',
       meta: {
@@ -188,41 +320,21 @@ export class PiSessionParser implements LineParser {
   }
 
   private endTurn(outcome: 'completed' | 'aborted' | 'error', ts: number): void {
-    for (const callId of this.openCalls) this.send(ts, { kind: 'tool.finished', callId, ok: false, output: 'interrupted' })
+    for (const callId of this.openCalls.keys()) this.send(ts, { kind: 'tool.finished', callId, ok: false, output: 'interrupted' })
     this.openCalls.clear()
     this.turnOpen = false
     this.send(ts, { kind: 'turn.ended', outcome })
   }
 
   private message(m: Record<string, unknown>, entryId: string | undefined, ts: number): void {
+    if (m.role === 'user') return this.user(m, entryId, ts)
+    if (m.role === 'system') return
+    this.decide()
     switch (m.role) {
-      case 'user': {
-        const text = humanText(contentText(m.content))
-        if (!text) return
-        if (!this.titled && !this.named) {
-          this.titled = true
-          this.send(ts, { kind: 'session.updated', meta: { title: firstLine(text, 80), titleSource: 'prompt' } })
-        }
-        this.startTurn(entryId, ts)
-        this.send(ts, { kind: 'message', role: 'user', text: clip(text, this.maxText) })
-        return
-      }
       case 'assistant':
         return this.assistant(m, entryId, ts)
-      case 'toolResult': {
-        const callId = str(m.toolCallId)
-        if (callId && this.openCalls.delete(callId)) {
-          const text = contentText(m.content).trim()
-          this.send(ts, {
-            kind: 'tool.finished',
-            callId,
-            ok: m.isError !== true,
-            output: text ? clip(text, OUTPUT_MAX) : undefined,
-            durationMs: typeof m.durationMs === 'number' ? m.durationMs : undefined,
-          })
-        }
-        return this.usage(m.usage, ts)
-      }
+      case 'toolResult':
+        return this.toolResult(m, ts)
       case 'bashExecution': {
         // A command the user ran directly (`!cmd`), outside the model loop.
         const callId = `bash-${entryId ?? ts}`
@@ -232,6 +344,52 @@ export class PiSessionParser implements LineParser {
         this.send(ts, { kind: 'tool.finished', callId, ok: m.cancelled !== true && (m.exitCode === undefined || m.exitCode === 0), output: output ? clip(output, OUTPUT_MAX) : undefined })
         return
       }
+    }
+  }
+
+  private user(m: Record<string, unknown>, entryId: string | undefined, ts: number): void {
+    const text = humanText(contentText(m.content))
+    if (!this.decided) {
+      const task = text?.startsWith(TASK_PREFIX) ? text.slice(TASK_PREFIX.length) : undefined
+      const link = task && this.headerTs !== undefined ? this.spawns?.claim(task, this.headerTs, this.parentFile) : undefined
+      this.decide(link)
+    }
+    if (!text) return
+    if (!this.titled && !this.named && !this.linked) {
+      this.titled = true
+      this.send(ts, { kind: 'session.updated', meta: { title: firstLine(text, 80), titleSource: 'prompt' } })
+    }
+    this.startTurn(entryId, ts)
+    this.send(ts, { kind: 'message', role: this.linked ? 'agent' : 'user', text: clip(text, this.maxText) })
+  }
+
+  private toolResult(m: Record<string, unknown>, ts: number): void {
+    const callId = str(m.toolCallId)
+    const started = callId ? this.openCalls.get(callId) : undefined
+    if (callId && started !== undefined) {
+      this.openCalls.delete(callId)
+      const text = contentText(m.content).trim()
+      const details = isRecord(m.details) ? m.details : {}
+      this.spawns?.finish(callId, ts, typeof details.startedAt === 'number' ? details.startedAt : undefined)
+      this.send(ts, {
+        kind: 'tool.finished',
+        callId,
+        ok: m.isError !== true,
+        output: text ? clip(text, OUTPUT_MAX) : undefined,
+        durationMs: typeof m.durationMs === 'number' ? m.durationMs : undefined,
+      })
+      this.nestedSpawns(m.nestedCalls, started, ts)
+    }
+    this.usage(m.usage, ts)
+  }
+
+  /** Subagents launched from inside another tool (`codemode`) are only recorded on that tool's result. */
+  private nestedSpawns(nested: unknown, t0: number, t1: number): void {
+    if (!this.spawns || !this.sessionId || !this.agentId || !this.fileId || !isRecord(nested) || !Array.isArray(nested.calls)) return
+    for (const c of nested.calls) {
+      if (!isRecord(c) || c.name !== SPAWN_TOOL || !isRecord(c.arguments)) continue
+      const task = str(c.arguments.task)
+      if (task) this.spawns.add({ root: this.sessionId, parent: this.agentId, parentFile: this.fileId, label: str(c.arguments.agent), task, t0, t1 })
     }
   }
 
@@ -271,9 +429,13 @@ export class PiSessionParser implements LineParser {
     const callId = str(block.id)
     const name = str(block.name)
     if (!callId || !name || this.openCalls.has(callId)) return
-    this.openCalls.add(callId)
+    this.openCalls.set(callId, ts)
     const args = isRecord(block.arguments) ? block.arguments : {}
     const d = describePiTool(name, args, this.cwd)
+    const task = name === SPAWN_TOOL ? str(args.task) : undefined
+    if (task && this.spawns && this.sessionId && this.agentId && this.fileId) {
+      this.spawns.add({ root: this.sessionId, parent: this.agentId, parentFile: this.fileId, callId, label: str(args.agent), task, t0: ts })
+    }
     this.send(ts, {
       kind: 'tool.started',
       callId,
