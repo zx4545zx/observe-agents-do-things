@@ -8,12 +8,16 @@
  */
 import './mission.css'
 import {
+  activityFeed,
+  agentCurrentActivity,
   agentTree,
   clip,
+  compareRuns,
   filterWorld,
   formatAgo,
   formatCount,
   formatDuration,
+  genericAgents,
   hotFiles,
   isLive,
   listProjects,
@@ -21,6 +25,8 @@ import {
   recentChanges,
   RECENT_MS,
   resolveProject,
+  runViews,
+  sessionSearchText,
   agentActivity,
   sessionActivity,
   sessionList,
@@ -28,12 +34,14 @@ import {
   totalTokens,
   UNKNOWN_PROJECT,
   workflowIndex,
-  workflowLabels,
   type AgentNode,
+  type AgentView,
   type AttentionItem,
   type ChangeEntry,
+  type FeedItem,
   type ObserverEvent,
   type ProjectInfo,
+  type RunView,
   type SessionState,
   type ToolCallState,
   type ToolCategory,
@@ -47,6 +55,7 @@ import { CATEGORY, harnessInfo } from '../../shared/theme'
 import { buddySeed, createBuddy, face, LOOKS, type Buddy } from '../../shared/buddy'
 import { Disposer, type ThemeName, type Visualization, type VizContext } from '../types'
 import { heartbeat, stackedArea } from './charts'
+import { agentDetail, agentLabel, agentRow, runBody, runDetail, runHead, taskHeadline, tickElapsed, type MonitorDeps } from './monitor'
 
 export const mission: Visualization = {
   id: 'mission',
@@ -69,7 +78,7 @@ export const mission: Visualization = {
 }
 
 type View = 'overview' | 'attention' | 'log'
-type Tab = 'activity' | 'diffs' | 'chat' | 'agents' | 'files'
+type Tab = 'activity' | 'diffs' | 'chat' | 'agents' | 'files' | 'agent' | 'run'
 
 const CATEGORIES = Object.keys(CATEGORY) as ToolCategory[]
 const ATTN_ICON: Record<AttentionItem['kind'], string> = { waiting: '⏸', errors: '✕', finished: '✓', aborted: '■', context: '◔', 'long-tool': '⧗' }
@@ -78,6 +87,8 @@ const BUCKETS = 60
 const PULSE_MS = 90_000
 const DIFF_PREVIEW = 10
 const CREW_MAX = 5
+const RUNS_DONE_SHOWN = 4
+const OTHERS_SHOWN = 14
 
 const TEMPLATE = `
 <div class="mc">
@@ -106,6 +117,8 @@ const TEMPLATE = `
     </div>
     <div class="mc-detail-head"><span class="mc-hero"></span><div class="mc-detail-info"></div></div>
     <nav class="mc-tabs">
+      <button data-tab="run" hidden>Run</button>
+      <button data-tab="agent" hidden>Agent</button>
       <button data-tab="activity">Activity</button>
       <button data-tab="diffs">Diffs</button>
       <button data-tab="chat">Chat</button>
@@ -145,6 +158,10 @@ function mount(root: HTMLElement, vctx: VizContext) {
     view: 'overview' as View,
     tab: settings.get<string>('mission.detailTab') as Tab,
     selected: undefined as string | undefined,
+    /** An agent or run picked from a list, shown in the Agent and Run tabs of the side panel. */
+    agent: undefined as string | undefined,
+    run: undefined as string | undefined,
+    allRuns: false,
     drawerOpen: false,
     search: '',
     expanded: new Set<string>(),
@@ -221,6 +238,16 @@ function mount(root: HTMLElement, vctx: VizContext) {
     ui.drawerOpen = true
     applyDrawer()
   }
+  function openAgent(sid: string, agentId: string): void {
+    select(sid)
+    ui.agent = agentId
+    openSession(sid, 'agent')
+  }
+  function openRun(sid: string, runId: string): void {
+    select(sid)
+    ui.run = runId
+    openSession(sid, 'run')
+  }
   function closeDrawer(): void {
     ui.drawerOpen = false
     applyDrawer()
@@ -235,6 +262,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
   function select(sid: string | undefined): void {
     if (ui.selected === sid) return
     ui.selected = sid
+    ui.agent = ui.run = undefined
     if (sid && !chats.has(sid)) {
       chats.set(sid, [])
       client.sessionEvents(sid).then((evs) => {
@@ -302,11 +330,27 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const urgent = new Set(attention.open().filter((a) => a.severity === 'high').map((a) => a.sessionId))
     return sessionList(world)
       .filter((s) => scope === 'all' || isLive(s) || (scope === 'recent' && now - s.lastActivityAt < RECENT_MS) || s.id === ui.selected)
-      .filter((s) => !text || [s.meta.title, s.meta.project, s.meta.gitBranch, s.meta.cwd, s.harness, s.id, workflowLabels(s).join(' ')].some((v) => v?.toLowerCase().includes(text)))
+      .filter((s) => !text || [s.meta.title, s.meta.project, s.meta.gitBranch, s.meta.cwd, s.harness, s.id].some((v) => v?.toLowerCase().includes(text)) || sessionSearchText(s, wfFor(s)).includes(text))
       .sort((a, b) => Number(urgent.has(b.id)) - Number(urgent.has(a.id)) || Number(isLive(b)) - Number(isLive(a)) || b.lastActivityAt - a.lastActivityAt)
   }
   const sessionName = (s: SessionState | undefined, fallback: string) => s?.meta.title ?? s?.meta.project ?? fallback.slice(0, 8)
   const agentName = (s: SessionState, id: string) => (id === s.rootAgentId ? 'main' : s.agents[id]?.name ?? id.slice(0, 6))
+  /** Workflow projection per session, computed once per repaint. */
+  let wfCache = new Map<string, WorkflowIndex>()
+  function wfFor(s: SessionState): WorkflowIndex {
+    let w = wfCache.get(s.id)
+    if (!w) wfCache.set(s.id, (w = workflowIndex(s)))
+    return w
+  }
+  /** `Run 4 · Worker` for a workflow agent, otherwise its own name. */
+  const whoIs = (s: SessionState, id: string) => agentLabel(agentName(s, id), wfFor(s).byAgent.get(id))
+  const monitorDeps: MonitorDeps = {
+    agentName,
+    label: (s, id) => whoIs(s, id),
+    openAgent,
+    openRun,
+    setTab: (t) => setTab(t),
+  }
 
   // ─── Overview ─────────────────────────────────────────────────────────
   const main = q('.mc-main')
@@ -323,9 +367,21 @@ function mount(root: HTMLElement, vctx: VizContext) {
     scopeBtns: HTMLElement[]
     diffs: KeyedList<ChangeEntry>
     diffEmpty: HTMLElement
-    activity: KeyedList<{ t: ToolCallState; s: SessionState }>
+    activity: KeyedList<FeedRow>
     activityEmpty: HTMLElement
+    ctx: HTMLElement
+    attnScope: HTMLElement
+    runsWrap: HTMLElement
+    runsCount: HTMLElement
+    runsMore: HTMLButtonElement
+    runCards: KeyedList<RunEntry>
+    othersWrap: HTMLElement
+    othersCount: HTMLElement
+    others: KeyedList<OtherEntry>
   }
+  type RunEntry = { s: SessionState; rv: RunView }
+  type OtherEntry = { s: SessionState; av: AgentView & { viaRun?: number } }
+  type FeedRow = { item: FeedItem; s: SessionState; t?: ToolCallState }
   let overview: Overview | undefined
 
   function kpiCell(label: string, ...value: HTMLElement[]): HTMLElement {
@@ -344,13 +400,22 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const throughput = h('canvas') as HTMLCanvasElement
     const throughputLabel = h('span.lbl')
     const attnList = h('div.mc-attn-list')
+    const ctx = h('div.mc-ctx')
+    const attnScope = h('span.faint')
     const attnCount = h('span.faint')
     const attnWrap = h('section.mc-section.mc-attn-wrap', null,
-      h('div.mc-section-head', null, 'Needs attention', attnCount, h('span.grow'), h('button', { onclick: () => attention.ackAll(), title: 'Acknowledge everything (X)' }, 'Clear all')),
+      h('div.mc-section-head', null, 'Needs attention', attnCount, attnScope, h('span.grow'), h('button', { onclick: () => attention.ackAll(), title: 'Acknowledge everything (X)' }, 'Clear all')),
       attnList,
       h('div.mc-allclear', null, '✓ Nothing needs you right now'),
     )
     const grid = h('div.mc-grid')
+    const runsList = h('div.mc-runs')
+    const runsCount = h('span.faint')
+    const runsMore = h('button', { onclick: () => { ui.allRuns = !ui.allRuns; dirty = true } }) as HTMLButtonElement
+    const runsWrap = h('div.mc-runs-wrap', null, h('div.mc-section-head', null, 'PStack runs', runsCount, h('span.grow'), runsMore), runsList)
+    const othersList = h('div.mc-others')
+    const othersCount = h('span.faint')
+    const othersWrap = h('div.mc-others-wrap', null, h('div.mc-section-head', null, 'Other agents', othersCount), othersList)
     const tileParts = new Map<string, Tile>()
     const scopeBtns = (['live', 'recent', 'all'] as const).map((sc) =>
       h('button', { onclick: () => settings.set('mission.scope', sc), 'data-scope': sc }, sc === 'live' ? 'Live' : sc === 'recent' ? 'Recent' : 'All'))
@@ -362,12 +427,13 @@ function mount(root: HTMLElement, vctx: VizContext) {
     // One wrapper so the layout can rearrange these sections for the space it gets (see mission.css).
     main.replaceChildren(h('div.mc-overview', null,
       h('section.mc-kpis', null,
+        ctx,
         kpiCells.live, kpiCell('agents working', kpi.working), kpiCells.needs,
         kpiCell('tools / min', kpi.perMin), kpiCell('tokens / min', kpi.tokMin), kpiCells.errors,
         h('div.mc-throughput', null, throughputLabel, throughput),
       ),
       attnWrap,
-      h('section.mc-section.mc-sessions', null, h('div.mc-section-head', null, 'Sessions', h('span.grow'), ...scopeBtns), grid),
+      h('section.mc-section.mc-sessions', null, runsWrap, othersWrap, h('div.mc-section-head', null, 'Sessions', h('span.grow'), ...scopeBtns), grid),
       h('section.mc-split', null,
         h('div.mc-pane.mc-diffs-pane', null, h('div.mc-section-head', null, 'Live diffs', h('span.grow'), h('span.faint', null, 'click a card to expand')), h('div.mc-pane-body', null, diffEmpty, diffList)),
         h('div.mc-pane.mc-activity-pane', null, h('div.mc-section-head', null, 'Activity', h('span.grow'), h('button', { onclick: () => setView('log') }, 'Open log')), h('div.mc-pane-body', null, activityEmpty, activityList)),
@@ -405,14 +471,31 @@ function mount(root: HTMLElement, vctx: VizContext) {
       flashClass: 'mo-flash',
       collapse: true,
     })
-    const activity = new KeyedList<{ t: ToolCallState; s: SessionState }>(activityList, {
-      key: (r) => r.t.id,
+    const activity = new KeyedList<FeedRow>(activityList, {
+      key: (r) => r.item.key,
       create: (r) => activityRow(r),
       update: (el, r) => updateActivityRow(el, r),
       flashClass: 'mo-flash',
       collapse: true,
     })
-    return { kpi, kpiCells, throughput, throughputLabel, attnWrap, attnCount, attn, tiles, tileParts, scopeBtns, diffs, diffEmpty, activity, activityEmpty }
+    const runCards = new KeyedList<RunEntry>(runsList, {
+      key: (r) => `${r.s.id}:${r.rv.run.id}`,
+      create: (r) => {
+        const head = h('div.hd', { onclick: () => openRun(r.s.id, r.rv.run.id), title: 'Open run' })
+        const body = h('div.bd')
+        return h('div.mc-run', null, head, body)
+      },
+      update: (el, r) => updateRunCard(el, r),
+      flashClass: 'mo-flash',
+      collapse: true,
+    })
+    const others = new KeyedList<OtherEntry>(othersList, {
+      key: (r) => `${r.s.id}:${r.av.agent.id}`,
+      create: () => h('div.wrap'),
+      update: (el, r) => updateOther(el, r),
+      collapse: true,
+    })
+    return { kpi, kpiCells, throughput, throughputLabel, attnWrap, attnCount, attn, tiles, tileParts, scopeBtns, diffs, diffEmpty, activity, activityEmpty, ctx, attnScope, runsWrap, runsCount, runsMore, runCards, othersWrap, othersCount, others }
   }
 
   function renderOverview(o: Overview, world: WorldState, now: number): void {
@@ -442,9 +525,14 @@ function mount(root: HTMLElement, vctx: VizContext) {
     o.kpiCells.errors.className = 'mc-kpi' + (errors ? ' err' : '')
 
     // Attention collapses to a single line when there is nothing to do.
+    // The header badge and notifications always cover every project, so say which scope this list is.
     const open = attention.open().filter(mine)
+    const everywhere = attention.open().filter((a) => a.severity !== 'low').length
+    const filtered = world !== client.world
     o.attnWrap.classList.toggle('is-empty', open.length === 0)
     o.attnCount.textContent = open.length ? ` · ${open.length}` : ''
+    o.attnScope.textContent = filtered ? ` · this project${everywhere > needs ? ` · ${everywhere - needs} more in other projects` : ''}` : ' · all projects'
+    setText(o.kpiCells.needs.querySelector('.k')!, filtered ? 'need you · here' : 'need you')
     o.attn.sync(open)
 
     const sessions = visibleSessions(world)
@@ -456,14 +544,46 @@ function mount(root: HTMLElement, vctx: VizContext) {
     o.tiles.sync(sessions)
     for (const b of o.scopeBtns) b.classList.toggle('on', b.dataset.scope === settings.get('mission.scope'))
 
+    // PStack runs: active first, then newest to oldest, never merged.
+    const runs = sessions.flatMap((s) => runViews(s, now, wfFor(s)).map((rv) => ({ s, rv }))).sort((x, y) => compareRuns(x.rv, y.rv))
+    const active = runs.filter((r) => r.rv.active)
+    const older = runs.length - active.length
+    const keep = ui.allRuns ? runs : [...active, ...runs.filter((r) => !r.rv.active).slice(0, RUNS_DONE_SHOWN)]
+    o.runsWrap.hidden = runs.length === 0
+    o.runsCount.textContent = runs.length ? ` · ${runs.length} ${runs.length === 1 ? 'run' : 'runs'}${active.length ? ` · ${active.length} running` : ''}` : ''
+    o.runsMore.hidden = older <= RUNS_DONE_SHOWN
+    o.runsMore.textContent = ui.allRuns ? 'Show fewer' : `Show ${older - RUNS_DONE_SHOWN} older`
+    o.runCards.sync(keep)
+
+    // Agents outside any workflow stay separate: busy ones first, then the most recent.
+    const others = sessions.flatMap((s) => genericAgents(s, wfFor(s)).map((av) => ({ s, av })))
+      .sort((x, y) => Number(y.av.agent.status !== 'done') - Number(x.av.agent.status !== 'done') || y.av.agent.lastActivityAt - x.av.agent.lastActivityAt)
+    const busy = others.filter((x) => x.av.agent.status !== 'done').length
+    o.othersWrap.hidden = others.length === 0
+    o.othersCount.textContent = others.length ? ` · ${others.length}${busy ? ` · ${busy} active` : ''}${others.length > OTHERS_SHOWN ? ` · showing ${OTHERS_SHOWN}` : ''}` : ''
+    o.others.sync(others.slice(0, OTHERS_SHOWN))
+
+    // One line saying where you are.
+    const projectLabel = filtered ? listProjects(client.world).find((p) => p.key === resolveProject(client.world, chosenProject()))?.label ?? 'Project' : 'All projects'
+    const running = active.length
+    o.ctx.replaceChildren(h('b', null, projectLabel), h('span.faint', null, ` ${live} live ${live === 1 ? 'session' : 'sessions'}${runs.length ? ` · ${running ? `${running} PStack ${running === 1 ? 'run' : 'runs'} running` : 'no PStack run running'}` : ''}`))
+
     const ids = sessions.map((s) => s.id)
     const changes = recentChanges(world, 30, ids)
     o.diffEmpty.hidden = changes.length > 0
     o.diffs.sync(changes)
     diffsPrimed = true
 
-    const rows = ids.flatMap((id) => sessionRows(world.sessions[id]!, 40))
-      .sort((a, b) => Number(b.t.endedAt === undefined) - Number(a.t.endedAt === undefined) || b.t.startedAt - a.t.startedAt).slice(0, 60)
+    const idSet = new Set(ids)
+    const rows: FeedRow[] = []
+    for (const item of activityFeed(world, 160)) {
+      if (!idSet.has(item.sessionId)) continue
+      const sess = world.sessions[item.sessionId]!
+      const t = item.toolId ? sess.tools[item.toolId] : undefined
+      if (item.kind === 'tool' && !t) continue
+      rows.push({ item, s: sess, t })
+      if (rows.length >= 60) break
+    }
     o.activityEmpty.hidden = rows.length > 0
     o.activity.sync(rows)
   }
@@ -602,7 +722,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
         h('span.chip', { style: `--c:var(--c-${c.change.op === 'write' ? 'write' : c.change.op === 'delete' ? 'shell' : 'edit'})` }, c.change.op),
         h('code.path', { title: c.change.path }, shortPath(c.change.path, 3)),
         h('span.add', null, `+${c.change.added}`), h('span.del', null, `−${c.change.removed}`),
-        h('span.who', null, face(buddySeed(c.sessionId, c.agentId, s?.rootAgentId), 14), `${s ? agentName(s, c.agentId) : c.agentId} · ${sessionName(s, c.sessionId)}`),
+        h('span.who', null, face(buddySeed(c.sessionId, c.agentId, s?.rootAgentId), 14), `${s ? whoIs(s, c.agentId) : c.agentId} · ${sessionName(s, c.sessionId)}`),
         h('span.age.faint'),
         interactive ? h('button.mc-open', { onclick: (e: Event) => { e.stopPropagation(); openSession(c.sessionId, 'diffs') }, title: 'Open session' }, '↗') : '',
       ),
@@ -660,19 +780,32 @@ function mount(root: HTMLElement, vctx: VizContext) {
   }
 
   // ─── Activity rows ────────────────────────────────────────────────────
-  function activityRow(r: { t: ToolCallState; s: SessionState }): HTMLElement {
-    const { t, s } = r
-    return h('div.mc-row', { onclick: () => openSession(s.id, 'activity'), title: t.title },
-      h('span.time', null, new Date(t.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })),
+  const clock = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+
+  function activityRow(r: FeedRow): HTMLElement {
+    const { item, s, t } = r
+    const who = h('span.who', null, face(buddySeed(s.id, item.agentId, s.rootAgentId), 14), `${whoIs(s, item.agentId)} · ${sessionName(s, s.id)}`)
+    if (!t) {
+      const a = s.agents[item.agentId]
+      return h('div.mc-row.agent', { onclick: () => openAgent(s.id, item.agentId), title: a?.task ?? '' },
+        h('span.time', null, clock(item.ts)),
+        h('span.chip', { style: '--c:var(--fg-faint)' }, 'agent'),
+        h('span.title', null, `${item.kind === 'started' ? 'started' : 'finished'}${a?.task ? ' · ' + taskHeadline(a.task, 90) : ''}`),
+        who,
+        h('span.dur'))
+    }
+    return h('div.mc-row', { onclick: () => openAgent(s.id, item.agentId), title: t.title },
+      h('span.time', null, clock(t.startedAt)),
       h('span.chip', { style: `--c:var(--c-${t.category})` }, CATEGORY[t.category]?.label ?? t.category),
       h('span.title', null, t.title),
-      h('span.who', null, face(buddySeed(s.id, t.agentId, s.rootAgentId), 14), `${agentName(s, t.agentId)} · ${sessionName(s, s.id)}`),
+      who,
       h('span.dur'),
     )
   }
 
-  function updateActivityRow(el: HTMLElement, r: { t: ToolCallState; s: SessionState }): void {
+  function updateActivityRow(el: HTMLElement, r: FeedRow): void {
     const t = r.t
+    if (!t) return
     const running = t.endedAt === undefined
     el.classList.toggle('running', running)
     el.classList.toggle('failed', t.ok === false)
@@ -680,6 +813,28 @@ function mount(root: HTMLElement, vctx: VizContext) {
     render(dur, running ? `r|${Math.floor((Date.now() - t.startedAt) / 1000)}` : `d|${t.ok}`, () => running
       ? [h('span.spin'), ' ', formatDuration(Date.now() - t.startedAt)]
       : [t.ok === false ? `✕ ${formatDuration(t.durationMs ?? 0)}` : formatDuration(t.durationMs ?? 0)])
+  }
+
+  // ─── PStack run cards and other agents ────────────────────────────────
+  function updateRunCard(el: HTMLElement, { s, rv }: RunEntry): void {
+    const now = Date.now()
+    el.className = `mc-run st-${rv.run.status}${ui.selected === s.id && ui.run === rv.run.id && (ui.drawerOpen || pinned()) ? ' sel' : ''}`
+    const head = el.querySelector<HTMLElement>('.hd')!
+    render(head, `${rv.run.status}|${rv.run.agentIds.length}|${rv.counts.working}|${rv.counts.waiting}|${rv.counts.failed}|${sessionName(s, s.id)}`, () => [
+      ...runHead(rv), h('span.grow'), h('span.sess.faint', null, sessionName(s, s.id)), h('span.dur.mono.faint')])
+    setText(head.querySelector('.dur')!, formatDuration(rv.durationMs))
+    const body = el.querySelector<HTMLElement>('.bd')!
+    const sig = [rv.lead, ...rv.workers].map((v) => `${v.agent.id}|${v.agent.status}|${v.activity.state}|${v.activity.text}|${v.agent.toolCount}|${v.agent.errorCount}|${Math.floor(v.agent.usage.output / 1000)}`).join(';')
+    render(body, sig, () => runBody(s, rv, monitorDeps, now))
+    tickElapsed(body, now)
+  }
+
+  function updateOther(el: HTMLElement, { s, av }: OtherEntry): void {
+    const now = Date.now()
+    const a = av.agent
+    const note = [av.viaRun ? `in Run ${av.viaRun}` : '', sessionName(s, s.id)].filter(Boolean).join(' · ')
+    render(el, `${a.status}|${av.activity.state}|${av.activity.text}|${a.toolCount}|${a.errorCount}|${note}`, () => [agentRow(s, av, undefined, monitorDeps, now, note)])
+    tickElapsed(el, now)
   }
 
   function sessionRows(s: SessionState, limit: number): Array<{ t: ToolCallState; s: SessionState }> {
@@ -697,7 +852,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
       body.push(h('tr.row' + (running ? '.running' : '') + (t.ok === false ? '.failed' : ''), { onclick: () => { toggleRow(t.id) } },
         h('td.time', null, new Date(t.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })),
         withSession ? h('td', null, sessionName(s, s.id)) : '',
-        h('td', null, agentName(s, t.agentId)),
+        h('td', null, whoIs(s, t.agentId)),
         h('td', null, h('span.chip', { style: `--c:var(--c-${t.category})` }, CATEGORY[t.category]?.label ?? t.category)),
         h('td.title', { title: t.title }, t.title),
         h('td.dur.st', null, running ? h('span', null, h('span.spin'), ' ', formatDuration(now - t.startedAt)) : t.ok === false ? `✕ ${formatDuration(t.durationMs ?? 0)}` : formatDuration(t.durationMs ?? 0)),
@@ -800,7 +955,23 @@ function mount(root: HTMLElement, vctx: VizContext) {
         fact(formatCount(totalTokens(s.usage)), 'tokens'), fact(s.meta.costUsd !== undefined ? `$${s.meta.costUsd.toFixed(2)}` : '—', 'cost'), fact(fill !== undefined ? `${fill}%` : '—', 'context')),
     ])
 
-    if (ui.tab === 'activity') {
+    for (const b of root.querySelectorAll<HTMLElement>('.mc-tabs [data-tab="agent"], .mc-tabs [data-tab="run"]')) b.hidden = !(b.dataset.tab === 'agent' ? ui.agent : ui.run)
+    const wf = wfFor(s)
+    const pickedAgent = ui.agent ? s.agents[ui.agent] : undefined
+    const pickedRun = ui.run ? runViews(s, now, wf).find((r) => r.run.id === ui.run) : undefined
+    if ((ui.tab === 'agent' && !pickedAgent) || (ui.tab === 'run' && !pickedRun)) setTab('activity')
+    if (ui.tab === 'agent' && pickedAgent) {
+      const av = runViews(s, now, wf).flatMap((r) => [r.lead, ...r.workers]).find((v) => v.agent.id === pickedAgent.id)
+        ?? genericAgents(s, wf).find((v) => v.agent.id === pickedAgent.id)
+        ?? { agent: pickedAgent, sessionId: s.id, depth: 0, workflow: wf.byAgent.get(pickedAgent.id), activity: agentCurrentActivity(s, pickedAgent) }
+      const rv = av.workflow ? runViews(s, now, wf).find((r) => r.run.id === av.workflow!.runId) : undefined
+      render(tabBody, `ag|${s.id}|${pickedAgent.id}|${pickedAgent.status}|${pickedAgent.toolCount}|${pickedAgent.errorCount}|${av.activity.text}|${pickedAgent.usage.output}|${Math.floor(now / 5000)}`, () => agentDetail(s, av, rv, monitorDeps, now))
+      tickElapsed(tabBody, now)
+    } else if (ui.tab === 'run' && pickedRun) {
+      const sig = [pickedRun.lead, ...pickedRun.workers].map((v) => `${v.agent.id}${v.agent.status}${v.activity.text}${v.agent.toolCount}`).join(';')
+      render(tabBody, `rn|${s.id}|${pickedRun.run.id}|${pickedRun.run.status}|${sig}|${s.counts.tools}|${Math.floor(now / 5000)}`, () => runDetail(s, pickedRun, monitorDeps, now))
+      tickElapsed(tabBody, now)
+    } else if (ui.tab === 'activity') {
       render(tabBody, `a|${s.id}|${s.counts.tools}|${openTools(s).length}|${ui.expanded.size}|${Math.floor(now / 1000)}|${s.toolOrder[s.toolOrder.length - 1]}`, () => [logTable(sessionRows(s, 200), now, false)])
     } else if (ui.tab === 'diffs') {
       const changes = recentChanges(world, 80, [s.id])
@@ -811,7 +982,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
       const key = `c|${s.id}|${msgs.length}`
       const changed = tabBody.dataset.key !== key
       render(tabBody, key, () => [h('div.mc-chat', null, ...(msgs.length ? msgs.map((m) => {
-        const who = m.agentId === s.rootAgentId ? (m.role === 'user' ? 'you' : 'main') : `${s.agents[m.agentId]?.name ?? 'agent'}${m.role === 'agent' ? ' · task' : ''}`
+        const who = m.agentId === s.rootAgentId ? (m.role === 'user' ? 'you' : 'main') : `${whoIs(s, m.agentId)}${m.role === 'agent' ? ' · task' : ''}`
         return h('div.mc-msg.' + m.role, null, h('div.who', null, h('span', null, who), h('span', null, new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))), m.text)
       }) : [h('div.mc-empty', null, 'No messages yet.')]))])
       if (changed && atBottom) tabBody.scrollTop = tabBody.scrollHeight
@@ -879,6 +1050,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const urgent = open.filter((a) => a.severity === 'high').length
     const needs = open.filter((a) => a.severity !== 'low').length
     const badge = q('.mc-attn-badge')
+    badge.title = 'Needs you, across all projects'
     badge.className = 'mc-attn-badge' + (needs ? (urgent ? ' pulse' : ' medium') : ' none')
     const badgeText = needs ? `⚑ ${needs} need${needs === 1 ? 's' : ''} you` : '✓ All clear'
     if (badge.textContent !== badgeText) badge.textContent = badgeText
@@ -916,13 +1088,16 @@ function mount(root: HTMLElement, vctx: VizContext) {
     for (const p of projects) { all.live += p.live; all.activeAgents += p.activeAgents; all.runsRunning += p.runsRunning }
     const rows = [all, ...projects].map((p) => {
       const r = projectRow(p.key)
+      if (p.key === active && !r.el.classList.contains('on')) queueMicrotask(() => r.el.scrollIntoView({ block: 'nearest', inline: 'nearest' }))
       r.el.classList.toggle('on', p.key === active)
       r.el.classList.toggle('live', p.live > 0)
       r.el.classList.toggle('unknown', p.key === UNKNOWN_PROJECT)
       r.el.setAttribute('aria-pressed', String(p.key === active))
-      r.el.title = p.key && p.key !== UNKNOWN_PROJECT ? `${p.key} · ${p.harnesses.map((x) => harnessInfo(x).label).join(', ')}` : p.key ? 'Sessions that did not report a working directory' : 'Show every project'
+      const facts = `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'}${p.runsRunning ? ` · ${p.runsRunning} PStack ${p.runsRunning === 1 ? 'run' : 'runs'} running` : ''}`
+      r.el.title = p.key && p.key !== UNKNOWN_PROJECT ? `${p.key}\n${facts} · ${p.harnesses.map((x) => harnessInfo(x).label).join(', ')}` : p.key ? `Sessions that did not report a working directory\n${facts}` : `Show every project\n${facts}`
       setText(r.name, p.label)
-      setText(r.count, String(p.sessions))
+      setText(r.count, p.activeAgents ? `${p.activeAgents} active` : 'idle')
+      r.count.classList.toggle('busy', p.activeAgents > 0)
       return r.el
     })
     const keep = new Set(rows)
@@ -949,6 +1124,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     if (!dirty && t - lastDom < 500) return
     dirty = false
     lastDom = t
+    wfCache = new Map()
     if (ui.view === 'overview') renderOverview(overview!, world, now)
     else if (ui.view === 'attention') renderAttentionView()
     else renderLogView(world, now)
