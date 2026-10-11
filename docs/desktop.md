@@ -45,11 +45,13 @@ Changing history range, a harness switch or a folder restarts the observer with 
 
 **Security.** A preload now exists with eight named calls (`window.oadtDesktop`), `contextIsolation` and `sandbox` stay on. Each handler checks that the sender is the page served by this observer.
 
+**Settings dialog.** The dialog is built once per opening and updated in place, so switching pages or toggling a switch does not replay its entrance animation. Quick saves do not disable the controls.
+
 ## Behaviour (V1)
 
 - **Server.** Loopback only (`127.0.0.1`). It first tries the port used last launch (kept in `desktop.json` under the app's userData folder) so the web UI's `localStorage`, which belongs to an origin with its port, survives restarts. If that port is taken it uses a free one. Selected project persistence relies on this.
 - **Harnesses.** Configured in Settings. Missing folders are fine. A Finder launch does not see shell variables such as `PI_CODING_AGENT_DIR`: set the folder in Settings.
-- **Security.** `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, no preload. Navigation away from the server origin is blocked and http(s) links open in the default browser. `window.open` is denied. Every permission request is denied.
+- **Security.** `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, and a preload with only the named calls above. Navigation away from the server origin is blocked and http(s) links open in the default browser. `window.open` is denied. Every permission request is denied.
 - **Lifecycle.** One instance (a second launch focuses the window). Closing the window keeps the app and observer running (macOS convention), Dock click reopens it, Quit closes the observer and the port before exiting.
 - **Window.** Size, position and maximized state are saved. A position that is no longer on a connected screen is dropped. Default 1400x900, minimum 900x600.
 - **Startup failure.** A dialog with the first line of the error (home folder shown as `~`) and Retry or Quit.
@@ -57,4 +59,4 @@ Changing history range, a harness switch or a folder restarts the observer with 
 
 ## Limits
 
-Unsigned and not notarized (`identity: null`): Gatekeeper asks for right-click, Open on first run, and a distributed build needs an Apple Developer certificate. arm64 macOS only. No auto-update, tray or remote mode. Window and project-persistence behaviour is checked by hand, the pure window bounds logic by ``npm test --workspace apps/desktop` (also part of `npm test`)`.
+Unsigned and not notarized (`identity: null`): Gatekeeper asks for right-click, Open on first run, and a distributed build needs an Apple Developer certificate. arm64 macOS only. No auto-update, tray or remote mode. Window, notification and project-persistence behaviour is checked by hand. Settings, the observer manager, notification transitions and window bounds are covered by `npm test --workspace apps/desktop` (also part of `npm test`, needs Node 22.18 or newer). Not yet checked by eye: the notification banner and its click, the Dock and Finder icon, the folder picker, a real login launch.

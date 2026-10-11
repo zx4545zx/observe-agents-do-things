@@ -54,6 +54,15 @@ Mission Control now reads as a monitor: [VISUALIZATIONS.md](VISUALIZATIONS.md) d
 - Needs attention follows the selected project and labels its scope. The title-bar badge, the Needs attention view and notifications stay global.
 - Agent Office is unchanged.
 
+## Milestone 5 and 6: desktop app
+
+[desktop.md](desktop.md) describes both.
+
+- `startObserver` in `@oadt/server` is the single way to start an observer and its server. The CLI, the VS Code extension and the Electron app use it.
+- `apps/desktop`: Electron main process, one preload with eight named calls, `ObserverManager` (start, restart, rescan, status, close), desktop-only settings, notification transitions, native menu, a generated icon, electron-builder config for macOS.
+- Mission Control: a Desktop page in Settings (only inside the app), a resizable project list, an empty Needs attention section is hidden, a taller chart.
+- Nothing in the event protocol or the adapters changed.
+
 ## Architecture decisions
 
 - **Reuse.** No new watcher, store or state model. Subagents use `agent.spawned` and the projection's existing parent and tool linking. Projects are a selector over `WorldState`.
@@ -69,6 +78,7 @@ Mission Control now reads as a monitor: [VISUALIZATIONS.md](VISUALIZATIONS.md) d
 | Baseline before milestone 2 | typecheck, `npm test` 43 of 43, build all passed |
 | After milestone 2 | `npm test` 56 of 56 (13 new) |
 | After milestone 3 | `npm test` 62 of 62 (6 new) |
+| After the desktop milestones | typecheck passes. `npm test` 75 of 75 plus 30 of 30 in `apps/desktop`. App, DMG and Settings checked in a real Electron window |
 | After milestone 4 | typecheck passes. `npm test` 70 of 70 (8 new selector tests). `npm run build` passes. Real-browser checks listed in the report |
 | Mutation checks | removing the ambiguity rule, the fork check or the skipped-middle scan each fails a test |
 | Real UI | server on real `~/.pi` and `~/.claude`: 30 sessions, project list, filtering, persisted selection after reload, narrow layout |
@@ -87,6 +97,6 @@ Commands: `npm run typecheck`, `npm test`, `npm run build`, `node packages/serve
 - Persisted project selection is verified in the browser, not in an automated test, because the web app has no test runner. The selection and fallback logic is tested.
 - Agent Office does not filter by project.
 
-## Next: custom monitoring UI
+## Open points
 
 The data it needs is in place: parent and child agents with `parentToolCallId`, each child's `name`, `role` and delegated `task`, its own events, project keys, and per-session PStack runs with tier, depth and status. PStack workers still have no role name or phase, because the data has none. A design that needs them needs PStack to record them first, for example as a structured argument on the `subagent` launch.

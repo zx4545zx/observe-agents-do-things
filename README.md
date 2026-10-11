@@ -43,6 +43,8 @@ https://github.com/user-attachments/assets/6bf8c1ef-9c59-4247-a0a8-3441ba648cc5
 
 <sub>Rooms, profile cards, the intercom, the front desk and the night shift.</sub>
 
+**Desktop app (macOS).** `npm run desktop:dist` builds `Observe Agents.app` and a DMG: the same observer and Mission Control in an Electron window, with settings (history range, harness folders, notifications, launch at login) and a native menu. No terminal needed. See **[docs/desktop.md](docs/desktop.md)**.
+
 Visualizations are plugins over the same data. Two ship today: **Mission Control** (the default), a compact IDE-style dashboard (Dark, Light and Gruvbox themes) built around what needs you, and the **Agent Office**. Pick one in Settings › Visualizations (the `⚙` button, or `Ctrl+,`), where each also has its own options page; Settings also holds the opt-in desktop notifications. Each one owns its entire view: layout, rendering, input and HUD. The office maps spawns to new hires walking in, permission prompts to raised hands, file work to papers flying to the filing cabinet, and finished turns to confetti. See **[docs/VISUALIZATIONS.md](docs/VISUALIZATIONS.md)**, including how to write your own.
 
 ## Quick start
