@@ -912,8 +912,8 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const active = resolveProject(world, chosenProject())
     // Nothing to choose between: stay out of the way, unless a choice is still in force.
     mc.classList.toggle('solo-project', projects.length < 2 && !active)
-    const all: ProjectInfo = { key: '', name: 'All Projects', label: 'All Projects', sessions: Object.keys(world.sessions).length, live: 0, lastActivityAt: 0, harnesses: [] }
-    for (const p of projects) all.live += p.live
+    const all: ProjectInfo = { key: '', name: 'All Projects', label: 'All Projects', sessions: Object.keys(world.sessions).length, live: 0, activeAgents: 0, runsRunning: 0, lastActivityAt: 0, harnesses: [] }
+    for (const p of projects) { all.live += p.live; all.activeAgents += p.activeAgents; all.runsRunning += p.runsRunning }
     const rows = [all, ...projects].map((p) => {
       const r = projectRow(p.key)
       r.el.classList.toggle('on', p.key === active)

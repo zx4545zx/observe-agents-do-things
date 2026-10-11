@@ -3,6 +3,7 @@
  * Pure helpers over a WorldState, so a frontend can filter without touching transcripts.
  */
 import type { SessionState, WorldState } from './state.js'
+import { workflowRuns } from './workflows.js'
 
 /** The group for sessions whose harness did not report a working directory. */
 export const UNKNOWN_PROJECT = '?'
@@ -16,6 +17,10 @@ export interface ProjectInfo {
   label: string
   sessions: number
   live: number
+  /** Agents working or waiting right now, main agents included. */
+  activeAgents: number
+  /** Workflow runs not yet done. */
+  runsRunning: number
   lastActivityAt: number
   harnesses: string[]
 }
@@ -43,10 +48,12 @@ export function listProjects(world: WorldState): ProjectInfo[] {
       const parts = key === UNKNOWN_PROJECT ? [] : segments(slashed(s.meta.cwd!))
       const name = key === UNKNOWN_PROJECT ? 'Unknown Project' : (parts.at(-1) ?? key)
       shown.set(key, parts)
-      byKey.set(key, (p = { key, name, label: name, sessions: 0, live: 0, lastActivityAt: 0, harnesses: [] }))
+      byKey.set(key, (p = { key, name, label: name, sessions: 0, live: 0, activeAgents: 0, runsRunning: 0, lastActivityAt: 0, harnesses: [] }))
     }
     p.sessions++
     if (s.status === 'working' || s.status === 'waiting') p.live++
+    for (const a of Object.values(s.agents)) if (a.status === 'working' || a.status === 'waiting') p.activeAgents++
+    p.runsRunning += workflowRuns(s).filter((r) => r.status !== 'done').length
     p.lastActivityAt = Math.max(p.lastActivityAt, s.lastActivityAt)
     if (!p.harnesses.includes(s.harness)) p.harnesses.push(s.harness)
   }
