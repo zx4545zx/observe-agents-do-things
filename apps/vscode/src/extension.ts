@@ -14,9 +14,8 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect, type ObserverClient } from '@oadt/client'
-import { Observer } from '@oadt/core'
 import { attentionItems, isLive, type AttentionItem, type WorldState } from '@oadt/protocol'
-import { ObserverServer } from '@oadt/server'
+import { startObserver } from '@oadt/server'
 
 const CONFIG = 'observeAgents'
 /** Attention kinds that count as "needs you" in the status bar and notifications. */
@@ -154,24 +153,14 @@ async function isObserver(url: string, token?: string): Promise<boolean> {
 
 /** An observer inside VS Code on a free port, announced to the other windows. */
 async function startEmbedded(): Promise<{ url: string; close: () => Promise<void> }> {
-  const observer = new Observer({ sinceMs: 6 * 3_600_000 })
-  await observer.start()
   const uiDir = vscode.Uri.joinPath(context.extensionUri, 'ui').fsPath
-  const server = new ObserverServer({ observer, host: '127.0.0.1', port: 0, uiDir })
-  let url: string
-  try {
-    url = (await server.listen()).url
-  } catch (err) {
-    observer.stop()
-    throw err
-  }
+  const { url, close: closeObserver } = await startObserver({ observer: { sinceMs: 6 * 3_600_000 }, port: 0, uiDir })
   try { writeFileSync(SHARED_FILE, JSON.stringify({ url, pid: process.pid })) } catch { /* other windows will start their own */ }
   return {
     url,
     close: async () => {
       if (readShared() === url) rmSync(SHARED_FILE, { force: true })
-      observer.stop()
-      await server.close()
+      await closeObserver()
     },
   }
 }

@@ -29,7 +29,8 @@ import {
   type RedactMode,
   type Source,
 } from '@oadt/core'
-import { ObserverServer, VERSION } from './server.js'
+import { VERSION } from './server.js'
+import { startObserver } from './start.js'
 
 const HELP = `
 observe-agents-do-things ${VERSION}
@@ -187,8 +188,7 @@ async function main(): Promise<void> {
   const uiDir = values['no-ui'] ? undefined : values.ui ? resolve(values.ui) : defaultUiDir()
 
   const started = Date.now()
-  await observer.start()
-  const server = new ObserverServer({
+  const handle = await startObserver({
     observer,
     host,
     port: values.port ? Number(values.port) : 4545,
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     readOnly: values['read-only'],
     redactMode: redact,
   })
-  const { url } = await server.listen()
+  const { url } = handle
   const sessions = Object.keys(observer.world.sessions).length
   const withToken = token ? `${url}/?token=${token}` : url
 
@@ -213,8 +213,7 @@ async function main(): Promise<void> {
   if (values.open) openBrowser(withToken)
 
   const shutdown = () => {
-    observer.stop()
-    void server.close().then(() => process.exit(0))
+    void handle.close().then(() => process.exit(0))
     setTimeout(() => process.exit(0), 1500).unref()
   }
   process.on('SIGINT', shutdown)
