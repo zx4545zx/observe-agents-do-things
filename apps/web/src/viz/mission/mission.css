@@ -4,9 +4,9 @@
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   position: absolute; inset: 0;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: 42px var(--proj-w, 172px) minmax(0, 1fr);
   grid-template-rows: 32px minmax(0, 1fr);
-  grid-template-areas: "title title" "act main";
+  grid-template-areas: "title title title" "act proj main";
   background: var(--bg); color: var(--fg); font: 12.5px/1.4 var(--font); overflow: hidden;
 }
 
@@ -102,6 +102,19 @@
 .mc-act button:hover { color: var(--fg); }
 .mc-act button.on { color: var(--fg); border-left-color: var(--accent); }
 .mc-act .count { position: absolute; right: 5px; bottom: 6px; min-width: 15px; height: 15px; border-radius: 8px; font-size: 9.5px; font-weight: 700; background: var(--err); color: #fff; display: grid; place-items: center; padding: 0 3px; }
+
+/* ─── Projects ──────────────────────────────────────────────────────── */
+.mc-projects { grid-area: proj; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-alt); border-right: 1px solid var(--border); overflow-y: auto; }
+.mc-projects-head { height: 26px; display: flex; align-items: center; padding: 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-dim); border-bottom: 1px solid var(--border); }
+.mc-projects-list { display: flex; flex-direction: column; padding: 4px 0; }
+.mc-proj { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; height: 26px; padding: 0 10px; text-align: left; color: var(--fg-dim); border-left: 2px solid transparent; }
+.mc-proj:hover { background: var(--hover); color: var(--fg); }
+.mc-proj.on { color: var(--fg); background: var(--hover); border-left-color: var(--accent); font-weight: 600; }
+.mc-proj .dot { width: 6px; height: 6px; border-radius: 50%; background: transparent; }
+.mc-proj.live .dot { background: var(--ok); }
+.mc-proj .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-proj.unknown .name { font-style: italic; }
+.mc-proj .count { color: var(--fg-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* ─── Main ──────────────────────────────────────────────────────────── */
 .mc-main { grid-area: main; overflow-y: auto; min-width: 0; display: flex; flex-direction: column; }
@@ -199,7 +212,9 @@
 
 /* ─── Detail drawer (or docked panel when pinned) ───────────────────── */
 .mc { --detail-w: min(520px, 92vw); --ease: cubic-bezier(.2,.8,.2,1); }
-.mc.pinned { grid-template-columns: 42px minmax(0, 1fr) var(--detail-w); grid-template-areas: "title title title" "act main detail"; --detail-w: 440px; }
+.mc.pinned { grid-template-columns: 42px var(--proj-w, 172px) minmax(0, 1fr) var(--detail-w); grid-template-areas: "title title title title" "act proj main detail"; --detail-w: 440px; }
+.mc.solo-project { --proj-w: 0px; }
+.mc.solo-project .mc-projects { display: none; }
 .mc-drawer {
   position: absolute; top: 32px; bottom: 0; right: 0; width: var(--detail-w); z-index: 20;
   background: var(--bg-alt); border-left: 1px solid var(--border-strong); box-shadow: -18px 0 40px #0004;
@@ -351,7 +366,12 @@
 
 /* Phones: last in the file so it wins over the base rules above. */
 @media (max-width: 800px) {
-  .mc, .mc.pinned { grid-template-columns: 1fr; grid-template-rows: 32px 36px minmax(0, 1fr); grid-template-areas: "title" "act" "main"; }
+  .mc, .mc.pinned { grid-template-columns: 1fr; grid-template-rows: 32px 36px auto minmax(0, 1fr); grid-template-areas: "title" "act" "proj" "main"; }
+  .mc-projects { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .mc-projects-head { display: none; }
+  .mc-projects-list { flex-direction: row; padding: 3px 6px; gap: 4px; }
+  .mc-proj { flex: none; border-radius: 12px; height: 24px; border: 1px solid var(--border); }
+  .mc-proj.on { border-color: var(--accent); }
   .mc-act { flex-direction: row; padding: 0 4px; border-right: 0; border-bottom: 1px solid var(--border); }
   .mc-act button { height: 35px; border-left: 0; border-bottom: 2px solid transparent; }
   .mc-act button.on { border-bottom-color: var(--accent); }

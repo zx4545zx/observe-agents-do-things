@@ -9,23 +9,28 @@
 import './mission.css'
 import {
   agentTree,
+  filterWorld,
   formatAgo,
   formatCount,
   formatDuration,
   hotFiles,
   isLive,
+  listProjects,
   openTools,
   recentChanges,
   RECENT_MS,
+  resolveProject,
   agentActivity,
   sessionActivity,
   sessionList,
   shortPath,
   totalTokens,
+  UNKNOWN_PROJECT,
   type AgentNode,
   type AttentionItem,
   type ChangeEntry,
   type ObserverEvent,
+  type ProjectInfo,
   type SessionState,
   type ToolCallState,
   type ToolCategory,
@@ -83,6 +88,10 @@ const TEMPLATE = `
     <button data-view="attention" title="Needs attention">⚑<span class="count" hidden></span></button>
     <button data-view="log" title="Activity log (all sessions)">≡</button>
   </nav>
+  <aside class="mc-projects" aria-label="Projects">
+    <div class="mc-projects-head">Projects</div>
+    <div class="mc-projects-list"></div>
+  </aside>
   <main class="mc-main"></main>
   <div class="mc-scrim"></div>
   <aside class="mc-drawer" aria-label="Session detail">
@@ -137,6 +146,21 @@ function mount(root: HTMLElement, vctx: VizContext) {
     expanded: new Set<string>(),
   }
 
+  // ─── Project filter ───────────────────────────────────────────────────
+  // The choice is remembered in settings (localStorage). A project that is not in the
+  // current world shows everything but is not forgotten: see resolveProject.
+  const chosenProject = () => settings.get<string>('mission.project') ?? ''
+  let scopedFor: { world: WorldState; seq: number; project: string; result: WorldState } | undefined
+  /** The world the dashboard shows. Filtering reads normalised state only and is cached per event. */
+  function scoped(): WorldState {
+    const world = client.world
+    const project = resolveProject(world, chosenProject())
+    if (scopedFor && scopedFor.world === world && scopedFor.seq === world.seq && scopedFor.project === project) return scopedFor.result
+    const result = filterWorld(world, project)
+    scopedFor = { world, seq: world.seq, project, result }
+    return result
+  }
+
   // ─── Theme ────────────────────────────────────────────────────────────
   let colors: Record<string, string> = {}
   let theme: ThemeName = 'dark'
@@ -156,7 +180,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
 
   // ─── Live data for charts ─────────────────────────────────────────────
   const toolStarts: Array<{ ts: number; cat: ToolCategory; sid: string }> = []
-  const tokenTimes: Array<{ ts: number; n: number }> = []
+  const tokenTimes: Array<{ ts: number; n: number; sid: string }> = []
   for (const s of Object.values(client.world.sessions)) for (const id of s.toolOrder) {
     const t = s.tools[id]
     if (t && t.startedAt > Date.now() - SPAN_MAX) toolStarts.push({ ts: t.startedAt, cat: t.category, sid: s.id })
@@ -166,7 +190,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
   d.add(client.onChange((_w, events) => {
     for (const e of events) {
       if (e.kind === 'tool.started') toolStarts.push({ ts: e.ts, cat: e.category, sid: e.sessionId })
-      if (e.kind === 'usage') tokenTimes.push({ ts: e.ts, n: e.delta.input + e.delta.output + e.delta.cacheWrite })
+      if (e.kind === 'usage') tokenTimes.push({ ts: e.ts, n: e.delta.input + e.delta.output + e.delta.cacheWrite, sid: e.sessionId })
       if (e.kind === 'message') chats.get(e.sessionId)?.push(e)
     }
     const cutoff = Date.now() - SPAN_MAX
@@ -249,7 +273,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
       return
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return
-    const ids = visibleSessions(client.world).map((s) => s.id)
+    const ids = visibleSessions(scoped()).map((s) => s.id)
     const i = ui.selected ? ids.indexOf(ui.selected) : -1
     switch (e.key) {
       case '/': e.preventDefault(); search.focus(); break
@@ -398,9 +422,10 @@ function mount(root: HTMLElement, vctx: VizContext) {
         if (t?.ok === false && (t.endedAt ?? 0) > now - 10 * 60_000) errors++
       }
     }
-    const needs = attention.open().filter((a) => a.severity !== 'low').length
-    const perMin = toolStarts.filter((t) => t.ts > now - 60_000).length
-    const tokMin = tokenTimes.filter((t) => t.ts > now - 60_000).reduce((n, t) => n + t.n, 0)
+    const mine = (a: AttentionItem) => !!world.sessions[a.sessionId]
+    const needs = attention.open().filter((a) => mine(a) && a.severity !== 'low').length
+    const perMin = toolStarts.filter((t) => t.ts > now - 60_000 && world.sessions[t.sid]).length
+    const tokMin = tokenTimes.filter((t) => t.ts > now - 60_000 && world.sessions[t.sid]).reduce((n, t) => n + t.n, 0)
     tickTo(o.kpi.live, live)
     o.kpi.liveOf.textContent = `/${Object.keys(world.sessions).length}`
     tickTo(o.kpi.working, working)
@@ -413,12 +438,16 @@ function mount(root: HTMLElement, vctx: VizContext) {
     o.kpiCells.errors.className = 'mc-kpi' + (errors ? ' err' : '')
 
     // Attention collapses to a single line when there is nothing to do.
-    const open = attention.open()
+    const open = attention.open().filter(mine)
     o.attnWrap.classList.toggle('is-empty', open.length === 0)
     o.attnCount.textContent = open.length ? ` · ${open.length}` : ''
     o.attn.sync(open)
 
     const sessions = visibleSessions(world)
+    if (ui.selected && !world.sessions[ui.selected]) {
+      select(undefined)
+      closeDrawer()
+    }
     if (!ui.selected && sessions[0]) select(sessions[0].id)
     o.tiles.sync(sessions)
     for (const b of o.scopeBtns) b.classList.toggle('on', b.dataset.scope === settings.get('mission.scope'))
@@ -446,7 +475,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     const series = CATEGORIES.map((c) => {
       const values = new Array<number>(BUCKETS).fill(0)
       for (const t of toolStarts) {
-        if (t.cat !== c || t.ts < start) continue
+        if (t.cat !== c || t.ts < start || !world.sessions[t.sid]) continue
         values[Math.min(BUCKETS - 1, Math.floor((t.ts - start) / bucketMs))]!++
       }
       return { values, color: colors[c] ?? colors.accent! }
@@ -609,7 +638,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     if (full) ui.expanded.add(key)
     else ui.expanded.delete(key)
     const card = overview?.diffs.element(key)
-    const entry = card ? recentChanges(client.world, 60).find((c) => c.key === key) : undefined
+    const entry = card ? recentChanges(scoped(), 60).find((c) => c.key === key) : undefined
     if (card && entry) {
       const from = card.offsetHeight
       fillDiff(card, entry, full)
@@ -849,13 +878,51 @@ function mount(root: HTMLElement, vctx: VizContext) {
     if (conn.textContent !== connText) conn.textContent = connText
   }
 
+  // ─── Project list ─────────────────────────────────────────────────────
+  const projectList = q('.mc-projects-list')
+  const projectRows = new Map<string, { el: HTMLElement; dot: HTMLElement; name: HTMLElement; count: HTMLElement }>()
+  function projectRow(key: string): { el: HTMLElement; dot: HTMLElement; name: HTMLElement; count: HTMLElement } {
+    let row = projectRows.get(key)
+    if (!row) {
+      const dot = h('span.dot')
+      const name = h('span.name')
+      const count = h('span.count')
+      const el = h('button.mc-proj', { 'data-key': key, onclick: () => settings.set('mission.project', key) }, dot, name, count)
+      projectRows.set(key, (row = { el, dot, name, count }))
+    }
+    return row
+  }
+  function renderProjects(): void {
+    const world = client.world
+    const projects = listProjects(world)
+    const active = resolveProject(world, chosenProject())
+    // Nothing to choose between: stay out of the way, unless a choice is still in force.
+    mc.classList.toggle('solo-project', projects.length < 2 && !active)
+    const all: ProjectInfo = { key: '', name: 'All Projects', label: 'All Projects', sessions: Object.keys(world.sessions).length, live: 0, lastActivityAt: 0, harnesses: [] }
+    for (const p of projects) all.live += p.live
+    const rows = [all, ...projects].map((p) => {
+      const r = projectRow(p.key)
+      r.el.classList.toggle('on', p.key === active)
+      r.el.classList.toggle('live', p.live > 0)
+      r.el.classList.toggle('unknown', p.key === UNKNOWN_PROJECT)
+      r.el.setAttribute('aria-pressed', String(p.key === active))
+      r.el.title = p.key && p.key !== UNKNOWN_PROJECT ? `${p.key} · ${p.harnesses.map((x) => harnessInfo(x).label).join(', ')}` : p.key ? 'Sessions that did not report a working directory' : 'Show every project'
+      setText(r.name, p.label)
+      setText(r.count, String(p.sessions))
+      return r.el
+    })
+    const keep = new Set(rows)
+    for (const [k, r] of projectRows) if (!keep.has(r.el)) { r.el.remove(); projectRows.delete(k) }
+    rows.forEach((el, i) => { if (projectList.children[i] !== el) projectList.insertBefore(el, projectList.children[i] ?? null) })
+  }
+
   // ─── Loop ─────────────────────────────────────────────────────────────
   let lastDom = 0
   let lastCanvas = 0
   d.add(attention.subscribe(() => { dirty = true }))
   d.loop((t) => {
     const now = Date.now()
-    const world = client.world
+    const world = scoped()
     if (ui.view === 'overview') {
       if (!overview) overview = buildOverview()
       // Canvases at ~30fps so the charts glide.
@@ -873,6 +940,7 @@ function mount(root: HTMLElement, vctx: VizContext) {
     else renderLogView(world, now)
     if (ui.drawerOpen || pinned()) renderDetail(world, now)
     renderChrome(world, now)
+    renderProjects()
   })
 
   setView('overview')
