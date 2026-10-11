@@ -106,6 +106,7 @@ const TEMPLATE = `
   <aside class="mc-projects" aria-label="Projects">
     <div class="mc-projects-head">Projects</div>
     <div class="mc-projects-list"></div>
+    <div class="mc-proj-resize" role="separator" aria-orientation="vertical" aria-label="Resize project list" tabindex="0"></div>
   </aside>
   <main class="mc-main"></main>
   <div class="mc-scrim"></div>
@@ -1065,6 +1066,37 @@ function mount(root: HTMLElement, vctx: VizContext) {
   }
 
   // ─── Project list ─────────────────────────────────────────────────────
+  const PROJ_W = { min: 140, max: 360, def: 190, key: 'oadt-mc-proj-w' }
+  const setProjW = (px: number, save = false) => {
+    const w = Math.round(Math.min(PROJ_W.max, Math.max(PROJ_W.min, px)))
+    mc.style.setProperty('--proj-user', `${w}px`)
+    if (save) try { localStorage.setItem(PROJ_W.key, String(w)) } catch { /* not remembered */ }
+    return w
+  }
+  try { const saved = Number(localStorage.getItem(PROJ_W.key)); if (saved) setProjW(saved) } catch { /* default */ }
+  const grip = q('.mc-proj-resize')
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    grip.setPointerCapture(e.pointerId)
+    grip.classList.add('dragging')
+    const left = q('.mc-projects').getBoundingClientRect().left
+    const move = (ev: PointerEvent) => setProjW(ev.clientX - left)
+    const up = (ev: PointerEvent) => {
+      setProjW(ev.clientX - left, true)
+      grip.classList.remove('dragging')
+      grip.removeEventListener('pointermove', move)
+      grip.removeEventListener('pointerup', up)
+    }
+    grip.addEventListener('pointermove', move)
+    grip.addEventListener('pointerup', up)
+  })
+  grip.addEventListener('dblclick', () => setProjW(PROJ_W.def, true))
+  grip.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const now = q('.mc-projects').getBoundingClientRect().width
+    setProjW(now + (e.key === 'ArrowRight' ? 16 : -16), true)
+  })
   const projectList = q('.mc-projects-list')
   const projectRows = new Map<string, { el: HTMLElement; dot: HTMLElement; name: HTMLElement; count: HTMLElement }>()
   function projectRow(key: string): { el: HTMLElement; dot: HTMLElement; name: HTMLElement; count: HTMLElement } {

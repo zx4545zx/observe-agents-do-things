@@ -4,7 +4,7 @@
   --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
   position: absolute; inset: 0;
   display: grid;
-  grid-template-columns: 42px var(--proj-w, 172px) minmax(0, 1fr);
+  grid-template-columns: 42px var(--proj-w, var(--proj-user, 190px)) minmax(0, 1fr);
   grid-template-rows: 32px minmax(0, 1fr);
   grid-template-areas: "title title title" "act proj main";
   background: var(--bg); color: var(--fg); font: 12.5px/1.4 var(--font); overflow: hidden;
@@ -212,7 +212,7 @@
 
 /* ─── Detail drawer (or docked panel when pinned) ───────────────────── */
 .mc { --detail-w: min(520px, 92vw); --ease: cubic-bezier(.2,.8,.2,1); }
-.mc.pinned { grid-template-columns: 42px var(--proj-w, 172px) minmax(0, 1fr) var(--detail-w); grid-template-areas: "title title title title" "act proj main detail"; --detail-w: 440px; }
+.mc.pinned { grid-template-columns: 42px var(--proj-w, var(--proj-user, 190px)) minmax(0, 1fr) var(--detail-w); grid-template-areas: "title title title title" "act proj main detail"; --detail-w: 440px; }
 .mc.solo-project { --proj-w: 0px; }
 .mc.solo-project .mc-projects { display: none; }
 .mc-drawer {
@@ -436,7 +436,6 @@
 .mc-ctx { display: flex; align-items: center; padding: 0 12px; border-right: 1px solid var(--border); font-size: 12px; white-space: nowrap; max-width: 380px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mc-ctx b { margin-right: 6px; }
 .mc-throughput { flex: 1 1 200px; min-width: 160px; height: 34px; }
-.mc-projects { --proj-w: 190px; }
 .mc-proj .count { font-size: 10.5px; }
 .mc-proj .count.busy { color: var(--ok); font-weight: 600; }
 
@@ -520,3 +519,9 @@
 .mc-row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-throughput { flex: 1 1 100%; height: 32px; border-top: 1px solid var(--border); }
 @media (min-width: 801px) and (max-height: 620px) { .mc-overview .mc-throughput { flex: none; height: 52px; border-top: 0; } }
+
+/* Drag the right edge of the project list to resize it; the width is remembered. */
+.mc-projects { position: relative; }
+.mc-proj-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
+.mc-proj-resize:hover, .mc-proj-resize.dragging { background: var(--accent); opacity: .5; }
+@media (max-width: 800px) { .mc-proj-resize { display: none; } }
