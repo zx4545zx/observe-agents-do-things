@@ -44,6 +44,16 @@ Real store (270 files): 79 sessions and 191 subagent files. **189 linked** (183 
 
 Real store: 23 PStack agents (15 leads, 8 workers) in 4 sessions, 15 runs, 166 ordinary subagents left generic. All 23 agree with the independent worker-system-prompt signal.
 
+## Milestone 4: monitoring UI
+
+Mission Control now reads as a monitor: [VISUALIZATIONS.md](VISUALIZATIONS.md) describes the layout.
+
+- `packages/protocol/src/monitor.ts`: pure selectors `runViews`, `activeRuns`, `compareRuns`, `agentCurrentActivity`, `genericAgents`, `activityFeed`, `sessionSearchText`. `listProjects` also reports `activeAgents` and `runsRunning` per project. No state, no events, and PStack detection and grouping are unchanged.
+- `apps/web/src/viz/mission/monitor.ts`: the DOM for agent rows, run cards and the Agent and Run detail tabs. `index.ts` wires them into the overview, the feed and the side panel.
+- Only what the data holds is shown: Lead or Worker, run number, depth, task, status. No role or phase labels, and nothing inferred from task text.
+- Needs attention follows the selected project and labels its scope. The title-bar badge, the Needs attention view and notifications stay global.
+- Agent Office is unchanged.
+
 ## Architecture decisions
 
 - **Reuse.** No new watcher, store or state model. Subagents use `agent.spawned` and the projection's existing parent and tool linking. Projects are a selector over `WorldState`.
@@ -58,7 +68,8 @@ Real store: 23 PStack agents (15 leads, 8 workers) in 4 sessions, 15 runs, 166 o
 |---|---|
 | Baseline before milestone 2 | typecheck, `npm test` 43 of 43, build all passed |
 | After milestone 2 | `npm test` 56 of 56 (13 new) |
-| After milestone 3 | typecheck passes. `npm test` 62 of 62 (6 new). `npm run build` passes |
+| After milestone 3 | `npm test` 62 of 62 (6 new) |
+| After milestone 4 | typecheck passes. `npm test` 70 of 70 (8 new selector tests). `npm run build` passes. Real-browser checks listed in the report |
 | Mutation checks | removing the ambiguity rule, the fork check or the skipped-middle scan each fails a test |
 | Real UI | server on real `~/.pi` and `~/.claude`: 30 sessions, project list, filtering, persisted selection after reload, narrow layout |
 | Real store | counts above |

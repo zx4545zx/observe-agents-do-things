@@ -89,7 +89,7 @@ two workers does not change a worker's depth or its run.
 
 ## In Mission Control
 
-In a session's Agents tab, each PStack agent gets a badge: `PStack · run 2 · 3 agents · done`
+Runs are cards in the monitor, with the lead and workers listed under them, and each agent and run has its own detail tab: see [VISUALIZATIONS.md](VISUALIZATIONS.md). In a session's Agents tab, each PStack agent also gets a badge: `PStack · run 2 · 3 agents · done`
 on a run's lead (hover for who launched it and its task), and `PStack · run 2` on its workers.
 Searching `pstack` finds sessions that have PStack agents. Ordinary agents look as before.
 Project filtering is unchanged: the badges are computed from the filtered session.
